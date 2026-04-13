@@ -1,41 +1,27 @@
-# Proxy Core 配置文件示例
-# 高性能代理内核配置
+# Hades v0.2.0 完整配置示例
+# 支持所有协议: SS/VMess/VLESS/Trojan/Hysteria2/TUIC/WireGuard
+# 完全兼容 Clash YAML 格式
 
 # ========== 基础配置 ==========
-# 混合端口（HTTP + SOCKS5）
 mixed-port: 7890
-
-# 允许局域网连接
 allow-lan: true
-
-# 绑定地址
 bind-address: "*"
-
-# 运行模式: rule / global / direct
 mode: rule
-
-# 日志级别: silent / error / warning / info / debug
 log-level: info
-
-# IPv6 支持
 ipv6: false
 
 # ========== 外部控制 ==========
-# RESTful API 监听地址
 external-controller: 0.0.0.0:9090
-
-# API 密钥
 secret: ""
 
-# ========== TUN 模式 ==========
+# ========== TUN 模式 (可选) ==========
 tun:
   enable: false
-  stack: mixed        # system / gvisor / mixed
+  stack: mixed
   dns-hijack:
     - any:53
   auto-route: true
   auto-detect-interface: true
-  strict-route: false
   mtu: 9000
 
 # ========== DNS 配置 ==========
@@ -45,29 +31,23 @@ dns:
   enhanced-mode: fake-ip
   fake-ip-range: 198.18.0.1/16
 
-  # Fake-IP 过滤
   fake-ip-filter:
     - '*.lan'
     - localhost.ptlogin2.qq.com
     - '+.srv.nintendo.net'
-    - '+.stun.playstation.net'
 
-  # 基础DNS服务器
   default-nameserver:
     - 223.5.5.5
     - 119.29.29.29
 
-  # 主DNS服务器
   nameserver:
     - https://dns.alidns.com/dns-query
     - https://doh.pub/dns-query
 
-  # 回退DNS服务器（境外）
   fallback:
     - tls://8.8.4.4
     - tls://1.1.1.1
 
-  # 回退过滤器
   fallback-filter:
     geoip: true
     geoip-code: CN
@@ -88,61 +68,113 @@ sniffer:
 
 # ========== 代理节点 ==========
 proxies:
-  # HTTP 代理示例
-  - name: "http-proxy"
-    type: http
-    server: example.com
-    port: 8080
-
-  # SOCKS5 代理示例
-  - name: "socks5-proxy"
-    type: socks5
-    server: example.com
-    port: 1080
-
-  # Shadowsocks 示例
+  # ----- Shadowsocks -----
   - name: "ss-node"
     type: ss
-    server: example.com
+    server: ss.example.com
     port: 443
     cipher: aes-256-gcm
     password: "your-password"
     udp: true
 
-  # VMess 示例
-  - name: "vmess-node"
+  # ----- VMess -----
+  - name: "vmess-ws"
     type: vmess
-    server: example.com
+    server: vmess.example.com
     port: 443
     uuid: "your-uuid"
     alter-id: 0
     cipher: auto
     tls: true
-    skip-cert-verify: false
+    sni: vmess.example.com
     network: ws
     ws-path: /vmess
     ws-headers:
-      Host: example.com
+      Host: vmess.example.com
 
-  # VLESS 示例
-  - name: "vless-node"
+  # ----- VLESS + Vision -----
+  - name: "vless-vision"
     type: vless
-    server: example.com
+    server: vless.example.com
     port: 443
     uuid: "your-uuid"
     tls: true
+    sni: vless.example.com
     flow: xtls-rprx-vision
-    network: tcp
+    udp: true
 
-  # Trojan 示例
+  # ----- VLESS + gRPC -----
+  - name: "vless-grpc"
+    type: vless
+    server: vless-grpc.example.com
+    port: 443
+    uuid: "your-uuid"
+    tls: true
+    sni: vless-grpc.example.com
+    network: grpc
+    grpc-service-name: vless
+
+  # ----- Trojan -----
   - name: "trojan-node"
     type: trojan
-    server: example.com
+    server: trojan.example.com
     port: 443
     password: "your-password"
+    sni: trojan.example.com
     udp: true
-    sni: example.com
+
+  # ----- Trojan + WebSocket -----
+  - name: "trojan-ws"
+    type: trojan
+    server: trojan-ws.example.com
+    port: 443
+    password: "your-password"
+    sni: trojan-ws.example.com
+    network: ws
+    ws-path: /trojan
+
+  # ----- Hysteria2 (新增) -----
+  - name: "hysteria2-node"
+    type: hysteria2
+    server: hy2.example.com
+    port: 443
+    password: "your-password"
+    sni: hy2.example.com
     skip-cert-verify: false
+    up: "100 Mbps"
+    down: "100 Mbps"
+    # obfs: salamander
+    # obfs-password: "obfs-password"
+
+  # ----- TUIC (新增) -----
+  - name: "tuic-node"
+    type: tuic
+    server: tuic.example.com
+    port: 443
+    uuid: "your-uuid"
+    password: "your-password"
+    alpn:
+      - h3
+    congestion-controller: bbr
+    sni: tuic.example.com
+    skip-cert-verify: false
+    udp-relay-mode: native
+    heartbeat-interval: 10000
+
+  # ----- WireGuard (新增) -----
+  - name: "wireguard-node"
+    type: wireguard
+    server: wg.example.com
+    port: 51820
+    private-key: "your-private-key"
+    public-key: "peer-public-key"
+    pre-shared-key: ""
+    mtu: 1400
+    udp: true
+    allowed-ips:
+      - "0.0.0.0/0"
+      - "::/0"
+    reserved: [1, 2, 3]
 
 # ========== 代理组 ==========
 proxy-groups:
@@ -150,60 +182,83 @@ proxy-groups:
   - name: "proxy"
     type: select
     proxies:
-      - auto
+      - auto-select
+      - fallback-group
+      - ss-node
+      - vmess-ws
+      - vless-vision
+      - trojan-node
+      - hysteria2-node
+      - tuic-node
+      - wireguard-node
       - DIRECT
 
-  # 自动测速
-  - name: "auto"
+  # 自动选择
+  - name: "auto-select"
     type: url-test
     proxies:
       - ss-node
-      - vmess-node
+      - vmess-ws
+      - vless-vision
       - trojan-node
+      - hysteria2-node
+      - tuic-node
     url: "https://www.gstatic.com/generate_204"
     interval: 300
     tolerance: 50
     timeout: 5000
 
   # 故障转移
-  - name: "fallback"
+  - name: "fallback-group"
     type: fallback
     proxies:
-      - ss-node
-      - vmess-node
+      - vless-vision
       - trojan-node
+      - hysteria2-node
+      - ss-node
     url: "https://www.gstatic.com/generate_204"
     interval: 300
 
-  # 负载均衡
-  - name: "balance"
-    type: load-balance
+  # 流媒体
+  - name: "streaming"
+    type: select
     proxies:
-      - ss-node
-      - vmess-node
-      - trojan-node
-    strategy: round-robin
+      - proxy
+      - auto-select
+      - DIRECT
+
+  # 国内直连
+  - name: "domestic"
+    type: select
+    proxies:
+      - DIRECT
+      - proxy
 
 # ========== 规则 ==========
 rules:
-  # 直连
-  - DOMAIN-SUFFIX,cn,DIRECT
-  - DOMAIN-KEYWORD,baidu,DIRECT
-  - DOMAIN-KEYWORD,taobao,DIRECT
-  - DOMAIN-KEYWORD,alipay,DIRECT
-  - DOMAIN-KEYWORD,tmall,DIRECT
+  # 流媒体
+  - DOMAIN-SUFFIX,netflix.com,streaming
+  - DOMAIN-SUFFIX,nflxvideo.net,streaming
+  - DOMAIN-SUFFIX,youtube.com,streaming
+  - DOMAIN-SUFFIX,googlevideo.com,streaming
+  - DOMAIN-SUFFIX,ytimg.com,streaming
+
+  # 国内直连
+  - DOMAIN-SUFFIX,cn,domestic
+  - DOMAIN-KEYWORD,baidu,domestic
+  - DOMAIN-KEYWORD,taobao,domestic
+  - DOMAIN-KEYWORD,alipay,domestic
+  - DOMAIN-KEYWORD,tmall,domestic
 
   # 代理
   - DOMAIN-SUFFIX,google.com,proxy
   - DOMAIN-SUFFIX,googleapis.com,proxy
-  - DOMAIN-SUFFIX,youtube.com,proxy
-  - DOMAIN-SUFFIX,ytimg.com,proxy
   - DOMAIN-SUFFIX,github.com,proxy
   - DOMAIN-SUFFIX,githubusercontent.com,proxy
   - DOMAIN-KEYWORD,google,proxy
 
   # GeoIP
-  - GEOIP,CN,DIRECT
+  - GEOIP,CN,domestic
 
   # 最终规则
   - MATCH,proxy

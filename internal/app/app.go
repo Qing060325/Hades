@@ -10,10 +10,13 @@ import (
 	"github.com/hades/hades/internal/config"
 	"github.com/hades/hades/pkg/api"
 	"github.com/hades/hades/pkg/core/adapter"
+	"github.com/hades/hades/pkg/core/adapter/hysteria2"
 	"github.com/hades/hades/pkg/core/adapter/shadowsocks"
 	"github.com/hades/hades/pkg/core/adapter/trojan"
+	"github.com/hades/hades/pkg/core/adapter/tuic"
 	"github.com/hades/hades/pkg/core/adapter/vless"
 	"github.com/hades/hades/pkg/core/adapter/vmess"
+	"github.com/hades/hades/pkg/core/adapter/wireguard"
 	"github.com/hades/hades/pkg/core/dialer"
 	"github.com/hades/hades/pkg/core/dns"
 	"github.com/hades/hades/pkg/core/group"
@@ -165,6 +168,12 @@ func (a *App) createAdapter(cfg *config.ProxyConfig) (adapter.Adapter, error) {
 		return a.createVLESS(cfg)
 	case "trojan":
 		return a.createTrojan(cfg)
+	case "hysteria2", "hy2":
+		return a.createHysteria2(cfg)
+	case "tuic":
+		return a.createTUIC(cfg)
+	case "wireguard", "wg":
+		return a.createWireGuard(cfg)
 	default:
 		return nil, fmt.Errorf("不支持的代理类型: %s", cfg.Type)
 	}
@@ -221,6 +230,95 @@ func (a *App) createTrojan(cfg *config.ProxyConfig) (adapter.Adapter, error) {
 		opts = append(opts, trojan.WithGRPC(cfg.GRPCServiceName))
 	}
 	return trojan.NewAdapter(cfg.Name, cfg.Server, cfg.Port, cfg.Password, opts...)
+}
+
+func (a *App) createHysteria2(cfg *config.ProxyConfig) (adapter.Adapter, error) {
+	var opts []hysteria2.Option
+
+	// SNI
+	sni := cfg.SNI
+	if sni == "" {
+		sni = cfg.Server
+	}
+	opts = append(opts, hysteria2.WithSNI(sni))
+
+	// 跳过证书验证
+	if cfg.SkipCertVerify {
+		opts = append(opts, hysteria2.WithSkipCertVerify(true))
+	}
+
+	// ALPN
+	if len(cfg.ALPN) > 0 {
+		opts = append(opts, hysteria2.WithALPN(cfg.ALPN))
+	}
+
+	// 带宽
+	if cfg.Hysteria2Opts != nil {
+		opts = append(opts, hysteria2.WithBandwidth(cfg.Hysteria2Opts.Up, cfg.Hysteria2Opts.Down))
+		if cfg.Hysteria2Opts.Obfs != "" {
+			opts = append(opts, hysteria2.WithObfs(cfg.Hysteria2Opts.Obfs, cfg.Hysteria2Opts.ObfsPassword))
+		}
+	}
+
+	return hysteria2.NewAdapter(cfg.Name, cfg.Server, cfg.Port, cfg.Password, opts...)
+}
+
+func (a *App) createTUIC(cfg *config.ProxyConfig) (adapter.Adapter, error) {
+	var opts []tuic.Option
+
+	// SNI
+	sni := cfg.SNI
+	if sni == "" {
+		sni = cfg.Server
+	}
+	opts = append(opts, tuic.WithSNI(sni))
+
+	// 跳过证书验证
+	if cfg.SkipCertVerify {
+		opts = append(opts, tuic.WithSkipCertVerify(true))
+	}
+
+	// ALPN
+	if len(cfg.ALPN) > 0 {
+		opts = append(opts, tuic.WithALPN(cfg.ALPN))
+	}
+
+	// TUIC 特有配置
+	if cfg.TUICOpts != nil {
+		opts = append(opts, tuic.WithCongestionController(tuic.CongestionController(cfg.TUICOpts.CongestionController)))
+		opts = append(opts, tuic.WithUDPRelayMode(tuic.UDPRelayMode(cfg.TUICOpts.UDPRelayMode)))
+		if cfg.TUICOpts.HeartbeatInterval > 0 {
+			opts = append(opts, tuic.WithHeartbeatInterval(time.Duration(cfg.TUICOpts.HeartbeatInterval)*time.Millisecond))
+		}
+		opts = append(opts, tuic.WithZeroRTTHandshake(cfg.TUICOpts.ZeroRTTHandshake))
+	}
+
+	return tuic.NewAdapter(cfg.Name, cfg.Server, cfg.Port, cfg.UUID, cfg.Password, opts...)
+}
+
+func (a *App) createWireGuard(cfg *config.ProxyConfig) (adapter.Adapter, error) {
+	var opts []wireguard.Option
+
+	// MTU
+	if cfg.MTU > 0 {
+		opts = append(opts, wireguard.WithMTU(cfg.MTU))
+	}
+
+	// 预共享密钥
+	if cfg.WireGuardOpts != nil {
+		if len(cfg.WireGuardOpts.Peers) > 0 {
+			peer := cfg.WireGuardOpts.Peers[0]
+			opts = append(opts, wireguard.WithPreSharedKey(peer.PreSharedKey))
+		}
+		opts = append(opts, wireguard.WithAllowedIPs(cfg.WireGuardOpts.AllowedIPs))
+	}
+
+	// Reserved
+	if len(cfg.Reserved) >= 3 {
+		opts = append(opts, wireguard.WithReserved(cfg.Reserved))
+	}
+
+	return wireguard.NewAdapter(cfg.Name, cfg.Server, cfg.Port, cfg.PrivateKey, cfg.PublicKey, opts...)
 }
 
 // initGroups 初始化代理组

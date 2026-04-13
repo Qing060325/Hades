@@ -1,0 +1,39 @@
+# Hysteria2 协议配置模板
+
+# Hysteria2 是基于 QUIC 的高性能代理协议
+# 特点: 高延迟优化、原生 UDP 支持、多路复用
+
+proxies:
+  - name: "hysteria2-example"
+    type: hysteria2
+    server: example.com
+    port: 443
+    password: "your-password"
+
+    # TLS 配置
+    sni: example.com
+    skip-cert-verify: false
+
+    # 带宽控制 (可选)
+    # 格式: "100 Mbps", "1 Gbps", 或纯数字 (bps)
+    up: "100 Mbps"
+    down: "100 Mbps"
+
+    # 混淆 (可选，服务端需要配置相同的混淆)
+    obfs: salamander
+    obfs-password: "your-obfs-password"
+
+    # ALPN (可选)
+    alpn:
+      - h3
+
+# 完整示例
+proxy-groups:
+  - name: "proxy"
+    type: select
+    proxies:
+      - hysteria2-example
+      - DIRECT
+
+rules:
+  - MATCH,proxy

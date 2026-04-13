@@ -1,0 +1,45 @@
+# TUIC 协议配置模板
+
+# TUIC 是基于 QUIC 的代理协议
+# 特点: 低延迟优化、UDP 原生支持、多路复用
+
+proxies:
+  - name: "tuic-example"
+    type: tuic
+    server: example.com
+    port: 443
+    uuid: "your-uuid-here"
+    password: "your-password"
+
+    # TLS 配置
+    sni: example.com
+    skip-cert-verify: false
+
+    # ALPN
+    alpn:
+      - h3
+
+    # 拥塞控制算法: bbr / cubic / new_reno
+    congestion-controller: bbr
+
+    # UDP 中继模式: native / quic
+    # native: 原生 UDP，性能更好
+    # quic: QUIC 流封装，更稳定
+    udp-relay-mode: native
+
+    # 心跳间隔 (毫秒)
+    heartbeat-interval: 10000
+
+    # 0-RTT 握手 (可选，提高连接速度)
+    zero-rtt-handshake: false
+
+# 完整示例
+proxy-groups:
+  - name: "proxy"
+    type: select
+    proxies:
+      - tuic-example
+      - DIRECT
+
+rules:
+  - MATCH,proxy

@@ -1,0 +1,68 @@
+# Hades 最小化测试配置
+
+# ========== 基础配置 ==========
+# 混合端口（HTTP + SOCKS5）
+mixed-port: 7890
+
+# 允许局域网连接
+allow-lan: true
+
+# 绑定地址
+bind-address: "*"
+
+# 运行模式: rule / global / direct
+mode: rule
+
+# 日志级别: silent / error / warning / info / debug
+log-level: info
+
+# IPv6 支持
+ipv6: false
+
+# ========== 外部控制 ==========
+# RESTful API 监听地址
+external-controller: 0.0.0.0:9090
+
+# API 密钥
+secret: ""
+
+# ========== TUN 模式 ==========
+tun:
+  enable: false
+
+# ========== DNS 配置 ==========
+dns:
+  enable: true
+  listen: 0.0.0.0:1053
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+
+  # 基础DNS服务器
+  default-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+
+  # 主DNS服务器
+  nameserver:
+    - https://dns.alidns.com/dns-query
+    - https://doh.pub/dns-query
+
+# ========== 嗅探配置 ==========
+sniffer:
+  enable: true
+  override-destination: true
+
+# ========== 代理节点 ==========
+proxies: []
+
+# ========== 代理组 ==========
+proxy-groups:
+  - name: "proxy"
+    type: select
+    proxies:
+      - DIRECT
+
+# ========== 规则 ==========
+rules:
+  # 直连所有流量
+  - MATCH,DIRECT

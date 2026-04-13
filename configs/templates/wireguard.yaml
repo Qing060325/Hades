@@ -1,0 +1,47 @@
+# WireGuard 协议配置模板
+
+# WireGuard 是现代化的高性能 VPN 协议
+# 特点: 极简协议、高性能加密、现代 VPN
+
+proxies:
+  - name: "wireguard-example"
+    type: wireguard
+    server: example.com
+    port: 51820
+
+    # 密钥 (使用 wg genkey 生成)
+    private-key: "your-private-key-base64"
+    public-key: "peer-public-key-base64"
+
+    # 预共享密钥 (可选，使用 wg genpsk 生成)
+    pre-shared-key: ""
+
+    # MTU (默认 1400)
+    mtu: 1400
+
+    # UDP 模式
+    udp: true
+
+    # 允许的 IP 范围
+    allowed-ips:
+      - "0.0.0.0/0"
+      - "::/0"
+
+    # Reserved 字段 (可选)
+    reserved: [1, 2, 3]
+
+# 密钥生成命令:
+# wg genkey > privatekey
+# wg pubkey < privatekey > publickey
+# wg genpsk > presharedkey
+
+# 完整示例
+proxy-groups:
+  - name: "proxy"
+    type: select
+    proxies:
+      - wireguard-example
+      - DIRECT
+
+rules:
+  - MATCH,proxy

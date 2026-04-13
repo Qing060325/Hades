@@ -27,21 +27,21 @@ func (p *Parser) Parse() (*Config, error) {
 		return nil, fmt.Errorf("读取配置文件失败: %w", err)
 	}
 
-	// 解析YAML
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("解析配置文件失败: %w", err)
+	// 自动检测配置格式并解析
+	cfg, err := AutoParseConfig(data)
+	if err != nil {
+		return nil, err
 	}
 
 	// 应用默认值
-	p.applyDefaults(&cfg)
+	p.applyDefaults(cfg)
 
 	// 验证配置
-	if err := p.validate(&cfg); err != nil {
+	if err := p.validate(cfg); err != nil {
 		return nil, fmt.Errorf("配置验证失败: %w", err)
 	}
 
-	return &cfg, nil
+	return cfg, nil
 }
 
 // applyDefaults 应用默认值

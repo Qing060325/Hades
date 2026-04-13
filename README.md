@@ -1,212 +1,239 @@
-# Hades
+# Hades - 高性能代理内核
 
-**Hades 高性能代理内核** - 使用 Go 语言编写的类 mihomo/Clash 代理内核，追求极致性能。
+<p align="center">
+  <img src="https://img.shields.io/badge/version-v0.2.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/go-1.21+-00ADD8" alt="go">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
+  <img src="https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-lightgrey" alt="platform">
+</p>
 
-## 特性
+<p align="center">
+  <b>一键安装 · 傻瓜式配置 · 开箱即用 · Clash 兼容</b>
+</p>
 
-### 协议支持
-- ✅ HTTP/HTTPS 代理（入站+出站）
-- ✅ SOCKS5 代理（入站+出站）
-- ✅ Shadowsocks (AEAD-2022 / aes-256-gcm / chacha20-poly1305)
-- ✅ VMess (AEAD加密 / WebSocket传输)
-- ✅ VLESS + XTLS-RPRX-Vision
-- ✅ Trojan (TLS伪装 / WebSocket/gRPC传输)
-- 🔲 Hysteria / Hysteria2（框架就绪）
-- 🔲 TUIC（框架就绪）
-- 🔲 WireGuard（框架就绪）
-- 🔲 Snell（框架就绪）
-- 🔲 SSH（框架就绪）
+---
 
-### 核心功能
-- ✅ 混合端口监听 (HTTP + SOCKS5 自动协议检测)
-- ✅ TUN 模式 (跨平台 / gVisor+系统混合栈 / DNS劫持)
-- ✅ 规则引擎 (DOMAIN/DOMAIN-SUFFIX/DOMAIN-KEYWORD/IPCIDR/GEOIP/MATCH)
-- ✅ DNS 系统 (Fake-IP池 / LRU缓存 / DoH/DoT)
-- ✅ 代理组 (Select/URLTest/Fallback/LoadBalance/Round-Robin)
-- ✅ RESTful API (代理管理/流量统计/连接管理/DNS查询/日志流)
-- ✅ 流量嗅探 (TLS SNI/HTTP Host/QUIC 自动检测)
-- ✅ WebSocket 传输层
-- ✅ gRPC 传输层
-- ✅ 连接池 (复用后端连接/自动回收/超时管理)
-- ✅ 流量统计 (上传/下载/速度/格式化)
+## 简介
 
-### 性能优化
-- ✅ Linux splice 零拷贝 (pipe pool复用)
-- ✅ 跨平台零拷贝抽象 (Linux splice / 通用缓冲池自动切换)
-- ✅ 分级内存池 (4KB/16KB/32KB/64KB, sync.Pool自动GC)
-- ✅ Goroutine 池 (IO密集型+计算密集型分离)
-- ✅ 连接池 (MaxIdle/MaxActive/IdleTimeout/MaxLifetime)
-- ✅ 缓冲双向转发 (pool.GetLarge 复用)
+**Hades** 是一个使用 Go 语言编写的高性能代理内核，类似 mihomo/Clash，追求极致性能。
+
+### ✨ v0.2.0 新特性
+
+| 特性 | 描述 |
+|------|------|
+| 🚀 **一键安装** | 跨平台安装脚本，自动检测系统和架构 |
+| 📦 **傻瓜式配置** | 交互式配置向导，开箱即用 |
+| 🔄 **Clash 兼容** | 完全兼容 Clash/Mihomo YAML 配置格式 |
+| 🆕 **Hysteria2** | 新增基于 QUIC 的高性能代理协议 |
+| 🆕 **TUIC** | 新增基于 QUIC 的低延迟代理协议 |
+| 🆕 **WireGuard** | 新增现代化 VPN 协议支持 |
+
+---
 
 ## 快速开始
 
-### 构建
+### 一键安装
 
 ```bash
-# 安装依赖
-make deps
+# Linux/macOS
+curl -fsSL https://raw.githubusercontent.com/Qing060325/Hades/main/install.sh | bash
 
-# 构建
-make build
-
-# 跨平台编译
-make cross-compile
+# 或使用 wget
+wget -qO- https://raw.githubusercontent.com/Qing060325/Hades/main/install.sh | bash
 ```
 
-### 运行
+### Docker
 
 ```bash
-# 使用配置文件运行
+docker run -d \
+  --name hades \
+  -p 7890:7890 \
+  -p 9090:9090 \
+  -v /path/to/config:/etc/hades \
+  ghcr.io/qing060325/hades:latest
+```
+
+### 手动安装
+
+```bash
+git clone https://github.com/Qing060325/Hades.git
+cd Hades
+make deps && make build
 ./bin/hades -c configs/config.yaml
-
-# 调试模式
-./bin/hades -c configs/config.yaml -d
-
-# 查看版本
-./bin/hades -v
 ```
 
-## 配置说明
+---
 
-配置文件采用 YAML 格式，完整示例见 `configs/config.yaml`。
+## 支持的协议
 
-### 基础配置
+| 协议 | 入站 | 出站 | UDP | 说明 |
+|------|:----:|:----:|:---:|------|
+| HTTP | ✅ | ✅ | ❌ | HTTP CONNECT 代理 |
+| SOCKS5 | ✅ | ✅ | ✅ | SOCKS5 代理 |
+| Shadowsocks | ❌ | ✅ | ✅ | AEAD-2022 加密 |
+| VMess | ❌ | ✅ | ✅ | WebSocket/gRPC |
+| VLESS | ❌ | ✅ | ✅ | XTLS-RPRX-Vision |
+| Trojan | ❌ | ✅ | ✅ | WebSocket/gRPC |
+| **Hysteria2** | ❌ | ✅ | ✅ | 🆕 QUIC 高性能 |
+| **TUIC** | ❌ | ✅ | ✅ | 🆕 QUIC 低延迟 |
+| **WireGuard** | ❌ | ✅ | ✅ | 🆕 现代 VPN |
+
+---
+
+## Clash YAML 兼容
+
+Hades **完全兼容** Clash/Mihomo 配置格式：
 
 ```yaml
-# 混合端口（HTTP + SOCKS5）
 mixed-port: 7890
-
-# 允许局域网连接
 allow-lan: true
-
-# 运行模式: rule / global / direct
 mode: rule
 
-# 日志级别
-log-level: info
-```
-
-### TUN 模式
-
-```yaml
-tun:
-  enable: true
-  stack: mixed    # system / gvisor / mixed
-  dns-hijack:
-    - any:53
-  auto-route: true
-```
-
-### DNS 配置
-
-```yaml
 dns:
   enable: true
   enhanced-mode: fake-ip
-  fake-ip-range: 198.18.0.1/16
   nameserver:
     - https://dns.alidns.com/dns-query
-```
 
-### 代理节点
-
-```yaml
 proxies:
-  - name: "ss-node"
-    type: ss
+  - name: "hysteria2-node"
+    type: hysteria2
     server: example.com
     port: 443
-    cipher: aes-256-gcm
     password: "password"
-```
 
-### 代理组
+  - name: "tuic-node"
+    type: tuic
+    server: example.com
+    port: 443
+    uuid: "uuid"
+    password: "password"
 
-```yaml
 proxy-groups:
   - name: "proxy"
     type: select
     proxies:
-      - node1
+      - hysteria2-node
       - DIRECT
 
-  - name: "auto"
-    type: url-test
-    proxies:
-      - node1
-      - node2
-    url: "https://www.gstatic.com/generate_204"
-    interval: 300
-```
-
-### 规则
-
-```yaml
 rules:
-  - DOMAIN-SUFFIX,google.com,proxy
   - GEOIP,CN,DIRECT
   - MATCH,proxy
 ```
 
-## 性能基准
+---
 
-| 指标 | 目标值 |
-|------|--------|
-| TCP 转发吞吐量 | > 10 Gbps |
-| TCP 转发延迟 | < 1ms |
-| UDP 转发吞吐量 | > 5 Gbps |
-| 内存占用 | < 50MB (空载) |
-| 连接处理能力 | > 100K 并发 |
+## 新协议配置
 
-## 项目结构
+### Hysteria2
 
-```
-hades/
-├── cmd/hades/              # 程序入口
-├── internal/                # 内部模块
-│   ├── app/                 # 应用生命周期
-│   ├── config/              # 配置管理
-│   └── version/             # 版本信息
-├── pkg/                     # 核心包
-│   ├── core/
-│   │   ├── adapter/         # 代理适配器
-│   │   ├── listener/        # 入站监听器
-│   │   ├── rules/           # 规则引擎
-│   │   ├── dns/             # DNS系统
-│   │   └── group/           # 代理组
-│   ├── transport/           # 传输层
-│   ├── crypto/              # 加密库
-│   ├── perf/                # 性能优化
-│   └── api/                 # API接口
-└── configs/                 # 配置文件
+```yaml
+- name: "hysteria2-node"
+  type: hysteria2
+  server: example.com
+  port: 443
+  password: "password"
+  sni: example.com
+  up: "100 Mbps"
+  down: "100 Mbps"
 ```
 
-## 开发
+### TUIC
 
-### 运行测试
+```yaml
+- name: "tuic-node"
+  type: tuic
+  server: example.com
+  port: 443
+  uuid: "uuid"
+  password: "password"
+  congestion-controller: bbr
+  udp-relay-mode: native
+```
+
+### WireGuard
+
+```yaml
+- name: "wireguard-node"
+  type: wireguard
+  server: example.com
+  port: 51820
+  private-key: "private-key"
+  public-key: "public-key"
+  mtu: 1400
+```
+
+---
+
+## 核心功能
+
+- ✅ 混合端口监听 (HTTP + SOCKS5)
+- ✅ TUN 模式 (跨平台)
+- ✅ 规则引擎 (DOMAIN/IPCIDR/GEOIP)
+- ✅ DNS 系统 (Fake-IP/DoH/DoT)
+- ✅ 代理组 (Select/URLTest/Fallback/LoadBalance)
+- ✅ RESTful API
+- ✅ 流量嗅探 (TLS/HTTP/QUIC)
+- ✅ 连接池管理
+- ✅ 流量统计
+
+---
+
+## 文档
+
+- [完整文档](docs/README.md)
+- [配置指南](docs/CONFIGURATION.md)
+- [协议说明](docs/PROTOCOLS.md)
+- [配置示例](docs/EXAMPLES.md)
+
+---
+
+## 常用命令
 
 ```bash
-make test
+# 启动
+hades -c /etc/hades/config.yaml
+
+# 调试模式
+hades -c config.yaml -d
+
+# 服务管理
+hades-ctl start    # 启动
+hades-ctl stop     # 停止
+hades-ctl restart  # 重启
+hades-ctl status   # 状态
+hades-ctl logs     # 日志
 ```
 
-### 性能测试
+---
 
-```bash
-make bench
-```
+## 更新日志
 
-### 代码检查
+### v0.2.0 (2024-04)
 
-```bash
-make lint
-```
+- ✨ 新增 Hysteria2 协议支持
+- ✨ 新增 TUIC 协议支持
+- ✨ 新增 WireGuard 协议支持
+- ✨ 实现 Clash YAML 完全兼容
+- ✨ 一键安装脚本
+- ✨ 交互式配置向导
+- 📝 完善文档和配置示例
 
-## 许可证
+### v0.1.0
 
-MIT License
+- 🎉 初始版本
+- ✅ 支持 HTTP/SOCKS5/SS/VMess/VLESS/Trojan
+
+---
 
 ## 致谢
 
-本项目参考了以下开源项目的设计思路：
+参考项目：
 - [mihomo](https://github.com/MetaCubeX/mihomo)
 - [clash](https://github.com/Dreamacro/clash)
+
+---
+
+## 许可证
+
+[MIT License](LICENSE)

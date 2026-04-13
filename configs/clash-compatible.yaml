@@ -1,0 +1,142 @@
+# Clash 兼容配置示例
+# 此配置完全兼容 Clash/Mihomo 配置格式
+# 可直接用于 Clash 客户端或 Hades
+
+# ========== 端口配置 ==========
+port: 7890              # HTTP 代理端口
+socks-port: 7891        # SOCKS5 代理端口
+mixed-port: 7890        # 混合端口 (二选一)
+
+# ========== 基础配置 ==========
+allow-lan: true
+bind-address: "*"
+mode: rule
+log-level: info
+ipv6: false
+
+# ========== 外部控制 ==========
+external-controller: 127.0.0.1:9090
+secret: ""
+
+# ========== DNS 配置 ==========
+dns:
+  enable: true
+  listen: 0.0.0.0:1053
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+
+  fake-ip-filter:
+    - '*.lan'
+    - localhost.ptlogin2.qq.com
+
+  default-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+
+  nameserver:
+    - https://dns.alidns.com/dns-query
+    - https://doh.pub/dns-query
+
+  fallback:
+    - tls://8.8.4.4
+    - tls://1.1.1.1
+
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+
+# ========== 代理节点 ==========
+proxies:
+  # Shadowsocks
+  - name: "ss-node"
+    type: ss
+    server: ss.example.com
+    port: 443
+    cipher: aes-256-gcm
+    password: "password"
+
+  # VMess
+  - name: "vmess-node"
+    type: vmess
+    server: vmess.example.com
+    port: 443
+    uuid: uuid-here
+    alterId: 0
+    cipher: auto
+    tls: true
+    network: ws
+    ws-path: /vmess
+
+  # VLESS
+  - name: "vless-node"
+    type: vless
+    server: vless.example.com
+    port: 443
+    uuid: uuid-here
+    tls: true
+    flow: xtls-rprx-vision
+
+  # Trojan
+  - name: "trojan-node"
+    type: trojan
+    server: trojan.example.com
+    port: 443
+    password: password
+
+  # Hysteria2
+  - name: "hysteria2-node"
+    type: hysteria2
+    server: hy2.example.com
+    port: 443
+    password: password
+    sni: hy2.example.com
+    up: "100 Mbps"
+    down: "100 Mbps"
+
+  # TUIC
+  - name: "tuic-node"
+    type: tuic
+    server: tuic.example.com
+    port: 443
+    uuid: uuid-here
+    password: password
+    alpn:
+      - h3
+    congestion-controller: bbr
+
+  # WireGuard
+  - name: "wireguard-node"
+    type: wireguard
+    server: wg.example.com
+    port: 51820
+    private-key: private-key
+    public-key: public-key
+    mtu: 1400
+
+# ========== 代理组 ==========
+proxy-groups:
+  - name: "代理"
+    type: select
+    proxies:
+      - 自动选择
+      - ss-node
+      - vmess-node
+      - DIRECT
+
+  - name: "自动选择"
+    type: url-test
+    proxies:
+      - ss-node
+      - vmess-node
+      - vless-node
+      - trojan-node
+    url: "http://www.gstatic.com/generate_204"
+    interval: 300
+
+# ========== 规则 ==========
+rules:
+  - DOMAIN-SUFFIX,google.com,代理
+  - DOMAIN-SUFFIX,github.com,代理
+  - DOMAIN-SUFFIX,youtube.com,代理
+  - GEOIP,CN,DIRECT
+  - MATCH,代理

@@ -136,7 +136,15 @@ type ProxyConfig struct {
 	Reality    *RealityConfig    `yaml:"reality"`
 	SSOpts     *ShadowsocksOpts  `yaml:"ss-opts"`
 	HysteriaOpts *HysteriaOpts   `yaml:"hysteria-opts"`
+	Hysteria2Opts *Hysteria2Opts `yaml:"hysteria2-opts"`
+	TUICOpts     *TUICOpts       `yaml:"tuic-opts"`
 	WireGuardOpts *WireGuardOpts `yaml:"wireguard-opts"`
+	// WireGuard 直接字段
+	PrivateKey   string   `yaml:"private-key"`
+	PublicKey    string   `yaml:"public-key"`
+	PreSharedKey string   `yaml:"pre-shared-key"`
+	MTU          int      `yaml:"mtu"`
+	Reserved     []int    `yaml:"reserved"`
 }
 
 // RealityConfig Reality 配置
@@ -152,12 +160,34 @@ type ShadowsocksOpts struct {
 
 // HysteriaOpts Hysteria 高级选项
 type HysteriaOpts struct {
-	Up        string `yaml:"up"`
-	Down      string `yaml:"down"`
-	Obfs      string `yaml:"obfs"`
-	Auth      string `yaml:"auth"`
-	AuthStr   string `yaml:"auth-str"`
+	Up        string   `yaml:"up"`
+	Down      string   `yaml:"down"`
+	Obfs      string   `yaml:"obfs"`
+	Auth      string   `yaml:"auth"`
+	AuthStr   string   `yaml:"auth-str"`
 	ALPN      []string `yaml:"alpn"`
+}
+
+// Hysteria2Opts Hysteria2 配置
+type Hysteria2Opts struct {
+	Up           string   `yaml:"up"`
+	Down         string   `yaml:"down"`
+	Obfs         string   `yaml:"obfs"`
+	ObfsPassword string   `yaml:"obfs-password"`
+	ALPN         []string `yaml:"alpn"`
+}
+
+// TUICOpts TUIC 配置
+type TUICOpts struct {
+	CongestionController string   `yaml:"congestion-controller"` // bbr / cubic / new_reno
+	UDPRelayMode         string   `yaml:"udp-relay-mode"`        // native / quic
+	HeartbeatInterval    int      `yaml:"heartbeat-interval"`
+	ALPN                 []string `yaml:"alpn"`
+	DisableSNI           bool     `yaml:"disable-sni"`
+	ReduceRTT            bool     `yaml:"reduce-rtt"`
+	RequestTimeout       int      `yaml:"request-timeout"`
+	UDPOverStream        bool     `yaml:"udp-over-stream"`
+	ZeroRTTHandshake     bool     `yaml:"zero-rtt-handshake"`
 }
 
 // WireGuardOpts WireGuard 高级选项
