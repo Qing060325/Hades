@@ -1,0 +1,27 @@
+# Binaries
+bin/
+*.exe
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+coverage.out
+coverage.html
+
+# Config (keep templates, ignore user configs)
+configs/subscription.yaml
+
+# Vendor
+vendor/
+
+# Build
+*.tar.gz
+*.zip

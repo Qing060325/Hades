@@ -1,0 +1,209 @@
+# Proxy Core 配置文件示例
+# 高性能代理内核配置
+
+# ========== 基础配置 ==========
+# 混合端口（HTTP + SOCKS5）
+mixed-port: 7890
+
+# 允许局域网连接
+allow-lan: true
+
+# 绑定地址
+bind-address: "*"
+
+# 运行模式: rule / global / direct
+mode: rule
+
+# 日志级别: silent / error / warning / info / debug
+log-level: info
+
+# IPv6 支持
+ipv6: false
+
+# ========== 外部控制 ==========
+# RESTful API 监听地址
+external-controller: 0.0.0.0:9090
+
+# API 密钥
+secret: ""
+
+# ========== TUN 模式 ==========
+tun:
+  enable: false
+  stack: mixed        # system / gvisor / mixed
+  dns-hijack:
+    - any:53
+  auto-route: true
+  auto-detect-interface: true
+  strict-route: false
+  mtu: 9000
+
+# ========== DNS 配置 ==========
+dns:
+  enable: true
+  listen: 0.0.0.0:1053
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+
+  # Fake-IP 过滤
+  fake-ip-filter:
+    - '*.lan'
+    - localhost.ptlogin2.qq.com
+    - '+.srv.nintendo.net'
+    - '+.stun.playstation.net'
+
+  # 基础DNS服务器
+  default-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+
+  # 主DNS服务器
+  nameserver:
+    - https://dns.alidns.com/dns-query
+    - https://doh.pub/dns-query
+
+  # 回退DNS服务器（境外）
+  fallback:
+    - tls://8.8.4.4
+    - tls://1.1.1.1
+
+  # 回退过滤器
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+
+# ========== 嗅探配置 ==========
+sniffer:
+  enable: true
+  override-destination: true
+  force-dns-mapping: true
+  parse-pure-ip: true
+  sniff:
+    HTTP:
+      ports: [80, 8080-8880]
+    TLS:
+      ports: [443, 8443]
+    QUIC:
+      ports: [443, 8443]
+
+# ========== 代理节点 ==========
+proxies:
+  # HTTP 代理示例
+  - name: "http-proxy"
+    type: http
+    server: example.com
+    port: 8080
+
+  # SOCKS5 代理示例
+  - name: "socks5-proxy"
+    type: socks5
+    server: example.com
+    port: 1080
+
+  # Shadowsocks 示例
+  - name: "ss-node"
+    type: ss
+    server: example.com
+    port: 443
+    cipher: aes-256-gcm
+    password: "your-password"
+    udp: true
+
+  # VMess 示例
+  - name: "vmess-node"
+    type: vmess
+    server: example.com
+    port: 443
+    uuid: "your-uuid"
+    alter-id: 0
+    cipher: auto
+    tls: true
+    skip-cert-verify: false
+    network: ws
+    ws-path: /vmess
+    ws-headers:
+      Host: example.com
+
+  # VLESS 示例
+  - name: "vless-node"
+    type: vless
+    server: example.com
+    port: 443
+    uuid: "your-uuid"
+    tls: true
+    flow: xtls-rprx-vision
+    network: tcp
+
+  # Trojan 示例
+  - name: "trojan-node"
+    type: trojan
+    server: example.com
+    port: 443
+    password: "your-password"
+    udp: true
+    sni: example.com
+    skip-cert-verify: false
+
+# ========== 代理组 ==========
+proxy-groups:
+  # 手动选择
+  - name: "proxy"
+    type: select
+    proxies:
+      - auto
+      - DIRECT
+
+  # 自动测速
+  - name: "auto"
+    type: url-test
+    proxies:
+      - ss-node
+      - vmess-node
+      - trojan-node
+    url: "https://www.gstatic.com/generate_204"
+    interval: 300
+    tolerance: 50
+    timeout: 5000
+
+  # 故障转移
+  - name: "fallback"
+    type: fallback
+    proxies:
+      - ss-node
+      - vmess-node
+      - trojan-node
+    url: "https://www.gstatic.com/generate_204"
+    interval: 300
+
+  # 负载均衡
+  - name: "balance"
+    type: load-balance
+    proxies:
+      - ss-node
+      - vmess-node
+      - trojan-node
+    strategy: round-robin
+
+# ========== 规则 ==========
+rules:
+  # 直连
+  - DOMAIN-SUFFIX,cn,DIRECT
+  - DOMAIN-KEYWORD,baidu,DIRECT
+  - DOMAIN-KEYWORD,taobao,DIRECT
+  - DOMAIN-KEYWORD,alipay,DIRECT
+  - DOMAIN-KEYWORD,tmall,DIRECT
+
+  # 代理
+  - DOMAIN-SUFFIX,google.com,proxy
+  - DOMAIN-SUFFIX,googleapis.com,proxy
+  - DOMAIN-SUFFIX,youtube.com,proxy
+  - DOMAIN-SUFFIX,ytimg.com,proxy
+  - DOMAIN-SUFFIX,github.com,proxy
+  - DOMAIN-SUFFIX,githubusercontent.com,proxy
+  - DOMAIN-KEYWORD,google,proxy
+
+  # GeoIP
+  - GEOIP,CN,DIRECT
+
+  # 最终规则
+  - MATCH,proxy
