@@ -12,6 +12,7 @@ import (
 	"github.com/Qing060325/Hades/pkg/core/group"
 	"github.com/Qing060325/Hades/pkg/core/rules"
 	"github.com/Qing060325/Hades/pkg/stats"
+	"github.com/Qing060325/Hades/pkg/subscription"
 	"github.com/rs/zerolog/log"
 )
 
@@ -26,6 +27,15 @@ type Server struct {
 	groupMgr   *group.Manager
 	ruleEngine *rules.Engine
 	statsMgr   *stats.Manager
+	subMgr     SubscriptionManager
+}
+
+// SubscriptionManager 订阅管理器接口
+type SubscriptionManager interface {
+	List() []*subscription.Subscription
+	GetSubscription(name string) (*subscription.Subscription, bool)
+	Update(name string) error
+	UpdateAll() error
 }
 
 // NewServer 创建 API 服务器
@@ -42,6 +52,11 @@ func (s *Server) SetManagers(adapterMgr *adapter.Manager, groupMgr *group.Manage
 	s.groupMgr = groupMgr
 	s.ruleEngine = ruleEngine
 	s.statsMgr = statsMgr
+}
+
+// SetSubscriptionManager 设置订阅管理器
+func (s *Server) SetSubscriptionManager(subMgr SubscriptionManager) {
+	s.subMgr = subMgr
 }
 
 // ListenAndServe 启动 API 服务器
@@ -79,6 +94,10 @@ func (s *Server) ListenAndServe() error {
 
 	// 健康检查
 	mux.HandleFunc("/ping", s.handlePing)
+
+	// 订阅管理
+	mux.HandleFunc("/subscriptions", s.handleSubscriptions)
+	mux.HandleFunc("/subscriptions/", s.handleSubscription)
 
 	s.server = &http.Server{
 		Addr:    s.addr,
@@ -119,6 +138,13 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, data interface{}) 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
+}
+
+// writeError 写入错误响应
+func (s *Server) writeError(w http.ResponseWriter, status int, message string) {
+	s.writeJSON(w, status, map[string]string{
+		"error": message,
+	})
 }
 
 // handleRoot 根路径
@@ -308,4 +334,77 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("pong"))
+}
+
+// handleSubscriptions 订阅列表
+func (s *Server) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
+	if s.subMgr == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "subscription manager not available")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		// 获取所有订阅
+		subs := s.subMgr.List()
+		infos := make([]subscription.SubscriptionInfo, 0, len(subs))
+		for _, sub := range subs {
+			infos = append(infos, sub.GetInfo())
+		}
+		s.writeJSON(w, http.StatusOK, map[string]interface{}{
+			"subscriptions": infos,
+		})
+
+	case http.MethodPost:
+		// 更新所有订阅
+		if err := s.subMgr.UpdateAll(); err != nil {
+			s.writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.writeJSON(w, http.StatusOK, map[string]string{
+			"message": "all subscriptions updated",
+		})
+
+	default:
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// handleSubscription 单个订阅操作
+func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
+	if s.subMgr == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "subscription manager not available")
+		return
+	}
+
+	// 从 URL 解析订阅名称
+	name := r.URL.Path[len("/subscriptions/"):]
+	if name == "" {
+		s.writeError(w, http.StatusBadRequest, "subscription name required")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		// 获取订阅详情
+		sub, exists := s.subMgr.GetSubscription(name)
+		if !exists {
+			s.writeError(w, http.StatusNotFound, "subscription not found")
+			return
+		}
+		s.writeJSON(w, http.StatusOK, sub.GetInfo())
+
+	case http.MethodPut:
+		// 更新订阅
+		if err := s.subMgr.Update(name); err != nil {
+			s.writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.writeJSON(w, http.StatusOK, map[string]string{
+			"message": "subscription updated",
+		})
+
+	default:
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }

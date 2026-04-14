@@ -25,6 +25,11 @@ type Subscription struct {
 	AutoUpdate   bool          `yaml:"auto-update"`
 	LastUpdate   time.Time     `yaml:"-"`
 	Nodes        []Node        `yaml:"-"`
+	// 流量信息
+	Upload       int64         `yaml:"-"` // 已上传字节
+	Download     int64         `yaml:"-"` // 已下载字节
+	Total        int64         `yaml:"-"` // 总流量限制
+	Expire       int64         `yaml:"-"` // 到期时间戳
 	mu           sync.RWMutex
 }
 
@@ -100,7 +105,7 @@ func (m *Manager) Update(name string) error {
 		return fmt.Errorf("subscription %s not found", name)
 	}
 
-	nodes, err := m.fetch(sub.URL)
+	nodes, upload, download, total, expire, err := m.fetchWithInfo(sub.URL)
 	if err != nil {
 		return fmt.Errorf("fetch subscription failed: %w", err)
 	}
@@ -108,9 +113,19 @@ func (m *Manager) Update(name string) error {
 	sub.mu.Lock()
 	sub.Nodes = nodes
 	sub.LastUpdate = time.Now()
+	sub.Upload = upload
+	sub.Download = download
+	sub.Total = total
+	sub.Expire = expire
 	sub.mu.Unlock()
 
-	log.Info().Str("name", name).Int("nodes", len(nodes)).Msg("订阅更新成功")
+	log.Info().
+		Str("name", name).
+		Int("nodes", len(nodes)).
+		Int64("upload", upload).
+		Int64("download", download).
+		Int64("total", total).
+		Msg("订阅更新成功")
 	return nil
 }
 
@@ -235,12 +250,18 @@ func (m *Manager) checkAndUpdate() {
 
 // fetch 拉取订阅内容
 func (m *Manager) fetch(url string) ([]Node, error) {
+	nodes, _, _, _, _, err := m.fetchWithInfo(url)
+	return nodes, err
+}
+
+// fetchWithInfo 拉取订阅内容并解析流量信息
+func (m *Manager) fetchWithInfo(url string) ([]Node, int64, int64, int64, int64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, 0, 0, 0, err
 	}
 
 	// 设置常见 User-Agent
@@ -248,18 +269,21 @@ func (m *Manager) fetch(url string) ([]Node, error) {
 
 	resp, err := m.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, 0, 0, 0, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		return nil, 0, 0, 0, 0, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, 0, 0, 0, 0, err
 	}
+
+	// 解析流量信息（从响应头）
+	upload, download, total, expire := parseSubscriptionInfo(resp.Header)
 
 	content := string(body)
 
@@ -275,7 +299,52 @@ func (m *Manager) fetch(url string) ([]Node, error) {
 		}
 	}
 
-	return parseSubscription(strings.TrimSpace(content))
+	nodes, err := parseSubscription(strings.TrimSpace(content))
+	if err != nil {
+		return nil, 0, 0, 0, 0, err
+	}
+
+	return nodes, upload, download, total, expire, nil
+}
+
+// parseSubscriptionInfo 解析订阅流量信息
+func parseSubscriptionInfo(header http.Header) (upload, download, total, expire int64) {
+	// 尝试从 Subscription-UserInfo 头解析
+	// 格式: upload=123; download=456; total=789; expire=1699123456
+	info := header.Get("Subscription-UserInfo")
+	if info == "" {
+		// 尝试其他常见的头
+		info = header.Get("X-Subscription-UserInfo")
+	}
+	if info == "" {
+		info = header.Get("subscription-userinfo")
+	}
+
+	if info != "" {
+		parts := strings.Split(info, ";")
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			kv := strings.SplitN(part, "=", 2)
+			if len(kv) != 2 {
+				continue
+			}
+			key := strings.TrimSpace(strings.ToLower(kv[0]))
+			value := strings.TrimSpace(kv[1])
+
+			switch key {
+			case "upload":
+				fmt.Sscanf(value, "%d", &upload)
+			case "download":
+				fmt.Sscanf(value, "%d", &download)
+			case "total":
+				fmt.Sscanf(value, "%d", &total)
+			case "expire":
+				fmt.Sscanf(value, "%d", &expire)
+			}
+		}
+	}
+
+	return
 }
 
 // parseSubscription 解析订阅内容
@@ -706,6 +775,15 @@ type SubscriptionInfo struct {
 	AutoUpdate bool      `json:"auto_update"`
 	LastUpdate time.Time `json:"last_update"`
 	NodeCount  int       `json:"node_count"`
+	// 流量信息
+	Upload     int64     `json:"upload"`     // 已上传（字节）
+	Download   int64     `json:"download"`   // 已下载（字节）
+	Total      int64     `json:"total"`      // 总流量（字节）
+	Expire     int64     `json:"expire"`     // 到期时间戳
+	// 计算字段
+	Used       int64     `json:"used"`       // 已用流量
+	Remaining  int64     `json:"remaining"`  // 剩余流量
+	UsagePercent float64 `json:"usage_percent"` // 使用百分比
 }
 
 // GetInfo 获取订阅信息
@@ -713,12 +791,26 @@ func (s *Subscription) GetInfo() SubscriptionInfo {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	used := s.Upload + s.Download
+	remaining := s.Total - used
+	usagePercent := float64(0)
+	if s.Total > 0 {
+		usagePercent = float64(used) / float64(s.Total) * 100
+	}
+
 	return SubscriptionInfo{
-		Name:       s.Name,
-		URL:        s.URL,
-		Interval:   int(s.Interval.Seconds()),
-		AutoUpdate: s.AutoUpdate,
-		LastUpdate: s.LastUpdate,
-		NodeCount:  len(s.Nodes),
+		Name:         s.Name,
+		URL:          s.URL,
+		Interval:     int(s.Interval.Seconds()),
+		AutoUpdate:   s.AutoUpdate,
+		LastUpdate:   s.LastUpdate,
+		NodeCount:    len(s.Nodes),
+		Upload:       s.Upload,
+		Download:     s.Download,
+		Total:        s.Total,
+		Expire:       s.Expire,
+		Used:         used,
+		Remaining:    remaining,
+		UsagePercent: usagePercent,
 	}
 }
