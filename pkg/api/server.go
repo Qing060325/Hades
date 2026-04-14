@@ -643,7 +643,8 @@ func performUpgrade(downloadURL, version string) {
 		// 给一点时间让状态被获取
 		time.Sleep(2 * time.Second)
 		// 发送重启信号
-		syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
+		p, _ := os.FindProcess(os.Getpid())
+		p.Signal(syscall.SIGTERM)
 	}
 }
 
