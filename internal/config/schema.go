@@ -49,6 +49,9 @@ type Config struct {
 	// 代理提供者
 	ProxyProviders map[string]ProxyProviderConfig `yaml:"proxy-providers"`
 
+	// 订阅配置
+	Subscriptions []SubscriptionConfig `yaml:"subscriptions"`
+
 	// GeoData
 	GeoXURL    map[string]string `yaml:"geox-url"`
 	GeoDataMode bool             `yaml:"geodata-mode"`
@@ -260,6 +263,14 @@ type HealthCheckConfig struct {
 	Interval time.Duration `yaml:"interval"`
 	Timeout  time.Duration `yaml:"timeout"`
 	Lazy     bool          `yaml:"lazy"`
+}
+
+// SubscriptionConfig 订阅配置
+type SubscriptionConfig struct {
+	Name       string        `yaml:"name"`
+	URL        string        `yaml:"url"`
+	Interval   time.Duration `yaml:"interval"`
+	AutoUpdate bool          `yaml:"auto-update"`
 }
 
 // Default 返回默认配置

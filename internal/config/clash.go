@@ -52,6 +52,9 @@ type ClashConfig struct {
 	// 代理提供者
 	ProxyProviders map[string]ProxyProviderConfig `yaml:"proxy-providers"`
 
+	// 订阅配置
+	Subscriptions []SubscriptionConfig `yaml:"subscriptions"`
+
 	// GeoData
 	GeoXURL    map[string]string `yaml:"geox-url"`
 	GeodataMode bool             `yaml:"geodata-mode"`
