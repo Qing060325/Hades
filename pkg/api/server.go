@@ -168,9 +168,10 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 
 // handleVersion 版本信息
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
-	s.writeJSON(w, http.StatusOK, map[string]string{
-		"version": "dev",
-		"build":   "unknown",
+	s.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"version":    version.Version,
+		"goVersion": version.GoVersion,
+		"buildTime": version.BuildTime,
 	})
 }
 
