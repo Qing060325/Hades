@@ -5,9 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/signal"
 	"runtime"
-	"syscall"
 
 	"github.com/Qing060325/Hades/internal/app"
 	"github.com/Qing060325/Hades/internal/config"
@@ -393,10 +391,10 @@ func nodeToProxyConfig(node subscription.Node) config.ProxyConfig {
 // waitForShutdown 等待关闭信号
 func waitForShutdown(application *app.App) {
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	setupShutdownSignals(sigChan)
 
 	sig := <-sigChan
-	log.Info().Str("signal", sig.String()).Msg("收到关闭信号")
+	log.Info().Str("signal", getShutdownMessage(sig)).Msg("收到关闭信号")
 
 	// 关闭应用
 	if err := application.Stop(); err != nil {

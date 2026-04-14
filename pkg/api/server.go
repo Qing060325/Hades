@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/Qing060325/Hades/internal/version"
@@ -644,8 +643,7 @@ func performUpgrade(downloadURL, version string) {
 		// 给一点时间让状态被获取
 		time.Sleep(2 * time.Second)
 		// 发送重启信号
-		p, _ := os.FindProcess(os.Getpid())
-		p.Signal(syscall.SIGTERM)
+		terminateProcess(os.Getpid())
 	}
 }
 

@@ -3,8 +3,6 @@ package service
 
 import (
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/Qing060325/Hades/internal/app"
 	"github.com/Qing060325/Hades/internal/config"
@@ -76,7 +74,7 @@ func (s *HadesService) run() {
 
 	// 等待中断信号
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	setupServiceSignals(sigChan)
 
 	select {
 	case sig := <-sigChan:
