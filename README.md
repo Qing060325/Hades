@@ -276,18 +276,38 @@ Hades/
 
 ## 📝 更新日志
 
+> 完整更新日志请查看 [CHANGELOG.md](CHANGELOG.md)
+
+### v0.5.0 (2026-04-14) - Windows 平台支持
+
+- 🎉 **Windows Service** - 支持 install/uninstall/start/stop/restart/status 命令
+- 🎉 **PowerShell 安装脚本** - 一键安装：`(iwr https://raw.githubusercontent.com/Qing060325/Hades/main/install-hades.ps1).Content | iex`
+- 🎉 **TUN 模式框架** - 统一的全平台 TUN 设备抽象层
+- ✅ 修复 Windows 升级 API 兼容性（文件路径、信号处理）
+- ✅ 跨平台编译优化，支持 Windows Service 交叉编译
+
+### v0.4.0 (2026-04-14)
+
+- 🔄 **自动升级 API** - 支持通过 Web 面板一键升级
+- 🔧 **订阅管理增强** - 自动更新订阅配置
+- 📊 **性能监控** - 添加连接统计和流量监控
+
+### v0.3.0 (2026-04-13)
+
+- ✨ **RESTful API** - 完整的配置管理和运行时 API
+- ✨ **健康检查** - `/health` 端点用于服务监控
+- ✨ **配置热重载** - 无需重启即可更新配置
+
 ### v0.2.1 (2026-04-14)
 
-- 🐛 **修复编译错误** - 修复 hysteria2/tuic 适配器 ReadFrom 返回值问题
-- 🐛 **修复兼容性** - 调整 Go 版本要求从 1.23 降至 1.21
-- ✨ **增强脚本** - `hades_manager.sh` 添加下载超时、文件校验、重试机制
-- 📦 **新增二进制** - 提供全平台预编译二进制文件
+- 🐛 修复 hysteria2/tuic 适配器 ReadFrom 返回值问题
+- 🐛 调整 Go 版本要求从 1.23 降至 1.21
+- ✨ `hades_manager.sh` 添加下载超时、文件校验、重试机制
+- 📦 提供全平台预编译二进制文件
 
 ### v0.2.0 (2026-04-13)
 
-- ✨ 新增 Hysteria2 协议支持
-- ✨ 新增 TUIC 协议支持
-- ✨ 新增 WireGuard 协议支持
+- ✨ 新增 Hysteria2 / TUIC / WireGuard 协议支持
 - ✨ 实现 Clash YAML 完全兼容
 - ✨ 一键安装脚本与交互式配置向导
 - 🔒 TLS 1.3 安全连接支持
