@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build binaries
+        run: |
+          mkdir -p dist
+          # Linux AMD64
+          GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X github.com/Qing060325/Hades/internal/version.BuildTime=$(date -u '+%Y-%m-%d_%H:%M:%S')" -o dist/hades-linux-amd64 ./cmd/hades
+          # Linux ARM64
+          GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X github.com/Qing060325/Hades/internal/version.BuildTime=$(date -u '+%Y-%m-%d_%H:%M:%S')" -o dist/hades-linux-arm64 ./cmd/hades
+          # Darwin AMD64
+          GOOS=darwin GOARCH=amd64 go build -ldflags "-s -w -X github.com/Qing060325/Hades/internal/version.BuildTime=$(date -u '+%Y-%m-%d_%H:%M:%S')" -o dist/hades-darwin-amd64 ./cmd/hades
+          # Darwin ARM64
+          GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w -X github.com/Qing060325/Hades/internal/version.BuildTime=$(date -u '+%Y-%m-%d_%H:%M:%S')" -o dist/hades-darwin-arm64 ./cmd/hades
+          # Windows AMD64
+          GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X github.com/Qing060325/Hades/internal/version.BuildTime=$(date -u '+%Y-%m-%d_%H:%M:%S')" -o dist/hades-windows-amd64.exe ./cmd/hades
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
