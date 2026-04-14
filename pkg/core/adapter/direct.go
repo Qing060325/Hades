@@ -4,6 +4,7 @@ package adapter
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"time"
 
@@ -122,32 +123,46 @@ func NewRejectDrop() *RejectDrop {
 // DialContext 建立TCP连接 (静默丢弃)
 func (r *RejectDrop) DialContext(ctx context.Context, metadata *Metadata) (net.Conn, error) {
 	// 静默丢弃，不返回错误，返回一个永远阻塞的连接
-	return &dropConn{}, nil
+	return newDropConn(), nil
 }
 
 // DialUDPContext 建立UDP连接 (静默丢弃)
 func (r *RejectDrop) DialUDPContext(ctx context.Context, metadata *Metadata) (net.PacketConn, error) {
-	return &dropPacketConn{}, nil
+	return newDropPacketConn(), nil
 }
 
 // dropConn 丢弃连接 (永不响应)
 type dropConn struct {
 	net.Conn
+	done chan struct{}
 }
 
-func (c *dropConn) Read(b []byte) (n int, err error)  { return 0, nil }
+func newDropConn() *dropConn {
+	return &dropConn{done: make(chan struct{})}
+}
+
+func (c *dropConn) Read(b []byte) (n int, err error) {
+	<-c.done
+	return 0, io.EOF
+}
 func (c *dropConn) Write(b []byte) (n int, err error) { return len(b), nil }
-func (c *dropConn) Close() error                      { return nil }
+func (c *dropConn) Close() error                      { close(c.done); return nil }
 
 // dropPacketConn 丢弃UDP连接
 type dropPacketConn struct {
 	net.PacketConn
+	done chan struct{}
+}
+
+func newDropPacketConn() *dropPacketConn {
+	return &dropPacketConn{done: make(chan struct{})}
 }
 
 func (c *dropPacketConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
-	return 0, nil, nil
+	<-c.done
+	return 0, nil, io.EOF
 }
 func (c *dropPacketConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
 	return len(b), nil
 }
-func (c *dropPacketConn) Close() error { return nil }
+func (c *dropPacketConn) Close() error { close(c.done); return nil }

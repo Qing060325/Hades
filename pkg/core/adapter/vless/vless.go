@@ -3,7 +3,7 @@ package vless
 
 import (
 	"context"
-	"crypto/rand"
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -13,6 +13,7 @@ import (
 
 	"github.com/hades/hades/pkg/core/adapter"
 	"github.com/hades/hades/pkg/perf/pool"
+	"github.com/hades/hades/pkg/transport"
 )
 
 const (
@@ -233,14 +234,32 @@ func (a *Adapter) handshake(conn net.Conn, metadata *adapter.Metadata) error {
 
 // tlsWrap TLS 封装
 func (a *Adapter) tlsWrap(conn net.Conn) net.Conn {
-	// TODO: 完整 TLS 实现
-	return conn
+	serverName := a.sni
+	if serverName == "" {
+		serverName = a.server
+	}
+	tlsConn := tls.Client(conn, &tls.Config{
+		ServerName: serverName,
+		MinVersion: tls.VersionTLS12,
+	})
+	return tlsConn
 }
 
 // wsWrap WebSocket 封装
 func (a *Adapter) wsWrap(conn net.Conn) net.Conn {
-	// TODO: WebSocket 握手
-	return conn
+	host := a.wsHost
+	if host == "" {
+		host = a.server
+	}
+	headers := map[string]string{
+		"Host": host,
+	}
+	wsConn, err := transport.NewWebSocketConn(conn, a.wsPath, host, headers)
+	if err != nil {
+		conn.Close()
+		return conn
+	}
+	return wsConn
 }
 
 // grpcWrap gRPC 封装
@@ -391,5 +410,4 @@ func NewVisionProcessor(conn net.Conn) *VisionProcessor {
 func (v *VisionProcessor) Process() {
 	// TODO: 实现 XTLS-RPRX-Vision 流处理
 	// 包括 TLS-in-TLS 检测、直接转发优化等
-	_ = rand.Read
 }

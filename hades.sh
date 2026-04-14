@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 PROJECT_DIR="/workspace/Hades"
 BIN_PATH="$PROJECT_DIR/bin/hades"
 CONFIG_PATH="$PROJECT_DIR/configs/config.yaml"
-PID_FILE="/tmp/hades.pid"
+PID_FILE="/var/run/hades.pid"
 
 # 打印带颜色的消息
 info() { echo -e "${GREEN}[INFO]${NC} $1"; }

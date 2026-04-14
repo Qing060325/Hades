@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -264,7 +265,7 @@ func (s *SOCKS5) handshake(conn net.Conn, metadata *Metadata) error {
 
 	// 2. 服务器响应
 	resp := make([]byte, 2)
-	if _, err := conn.Read(resp); err != nil {
+	if _, err := io.ReadFull(conn, resp); err != nil {
 		return fmt.Errorf("读取SOCKS5响应失败: %w", err)
 	}
 
@@ -318,7 +319,7 @@ func (s *SOCKS5) authenticate(conn net.Conn) error {
 	}
 
 	resp := make([]byte, 2)
-	if _, err := conn.Read(resp); err != nil {
+	if _, err := io.ReadFull(conn, resp); err != nil {
 		return fmt.Errorf("读取认证响应失败: %w", err)
 	}
 
@@ -373,7 +374,7 @@ func (s *SOCKS5) sendConnectRequest(conn net.Conn, metadata *Metadata) error {
 
 	// 读取响应
 	resp := make([]byte, 10)
-	if _, err := conn.Read(resp); err != nil {
+	if _, err := io.ReadFull(conn, resp); err != nil {
 		return fmt.Errorf("读取连接响应失败: %w", err)
 	}
 

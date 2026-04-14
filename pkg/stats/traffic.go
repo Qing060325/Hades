@@ -102,7 +102,8 @@ type SpeedCounter struct {
 // NewSpeedCounter 创建速度计算器
 func NewSpeedCounter() *SpeedCounter {
 	return &SpeedCounter{
-		lastTime: time.Now(),
+		lastBytes: 0,
+		lastTime:  time.Now(),
 	}
 }
 
@@ -115,7 +116,9 @@ func (s *SpeedCounter) Update(bytes int64) float64 {
 	elapsed := now.Sub(s.lastTime).Seconds()
 
 	if elapsed > 0.5 { // 每 0.5 秒更新一次
-		s.currentSpeed = float64(bytes-s.lastBytes) / elapsed
+		if s.lastBytes > 0 {
+			s.currentSpeed = float64(bytes-s.lastBytes) / elapsed
+		}
 		s.lastBytes = bytes
 		s.lastTime = now
 	}

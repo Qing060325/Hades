@@ -4,11 +4,10 @@ package sniffer
 import (
 	"bufio"
 	"bytes"
-	"context"
+	"fmt"
 	"net"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/hades/hades/internal/config"
@@ -305,9 +304,27 @@ func (s *Sniffer) getPortFromConfig(protocol string) int {
 		return 0
 	}
 
-	for range ports.Ports {
-		// 简化实现，直接返回第一个端口
+	if len(ports.Ports) == 0 {
 		return 0
+	}
+
+	// 返回第一个端口（支持范围如 "8080-8880" 时返回范围的起始值）
+	for _, p := range ports.Ports {
+		if idx := strings.IndexByte(p, '-'); idx > 0 {
+			// 范围端口，解析起始值
+			start := p[:idx]
+			var port int
+			fmt.Sscanf(start, "%d", &port)
+			if port > 0 {
+				return port
+			}
+		} else {
+			var port int
+			fmt.Sscanf(p, "%d", &port)
+			if port > 0 {
+				return port
+			}
+		}
 	}
 
 	return 0
@@ -379,7 +396,4 @@ func PeekConn(conn net.Conn) (*adapter.Metadata, []byte, error) {
 	return metadata, data, nil
 }
 
-// _ = sync, context, regexp import
-var _ = sync.Mutex{}
-var _ = context.Background
-var _ = regexp.MustCompile
+

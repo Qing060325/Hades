@@ -1,6 +1,6 @@
 module github.com/hades/hades
 
-go 1.25.0
+go 1.23
 
 require (
 	github.com/rs/zerolog v1.32.0

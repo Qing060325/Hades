@@ -309,7 +309,8 @@ config_wizard() {
         1)
             read -p "混合端口 [7890]: " port
             port=${port:-7890}
-            sed -i "s/mixed-port: .*/mixed-port: ${port}/" "${CONFIG_DIR}/config.yaml"
+            sed -i.bak "s/mixed-port: .*/mixed-port: ${port}/" "${CONFIG_DIR}/config.yaml"
+            rm -f "${CONFIG_DIR}/config.yaml.bak"
             info "混合端口已设置为 ${port}"
             ;;
         2)

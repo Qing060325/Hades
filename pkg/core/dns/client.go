@@ -129,33 +129,74 @@ func (c *Client) FakeIP(host string) net.IP {
 // LRUCache LRU缓存
 type LRUCache struct {
 	capacity int
-	data     map[string]cacheEntry
+	data     map[string]*lruNode
+	head     *lruNode
+	tail     *lruNode
 	mu       sync.RWMutex
 }
 
-type cacheEntry struct {
+type lruNode struct {
+	key       string
 	ips       []net.IP
 	expiresAt time.Time
+	prev      *lruNode
+	next      *lruNode
 }
 
 // NewLRUCache 创建LRU缓存
 func NewLRUCache(capacity int) *LRUCache {
-	return &LRUCache{
+	c := &LRUCache{
 		capacity: capacity,
-		data:     make(map[string]cacheEntry),
+		data:     make(map[string]*lruNode),
 	}
+	// 哨兵节点
+	c.head = &lruNode{}
+	c.tail = &lruNode{}
+	c.head.next = c.tail
+	c.tail.prev = c.head
+	return c
+}
+
+// moveToHead 将节点移到头部
+func (c *LRUCache) moveToHead(node *lruNode) {
+	// 从当前位置摘除
+	node.prev.next = node.next
+	node.next.prev = node.prev
+	// 插入到头部
+	node.next = c.head.next
+	node.prev = c.head
+	c.head.next.prev = node
+	c.head.next = node
+}
+
+// removeTail 移除尾部节点
+func (c *LRUCache) removeTail() *lruNode {
+	node := c.tail.prev
+	if node == c.head {
+		return nil
+	}
+	node.prev.next = c.tail
+	c.tail.prev = node.prev
+	return node
 }
 
 // Get 获取缓存
 func (c *LRUCache) Get(key string) ([]net.IP, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	entry, ok := c.data[key]
-	if !ok || time.Now().After(entry.expiresAt) {
+	node, ok := c.data[key]
+	if !ok || time.Now().After(node.expiresAt) {
+		if ok {
+			// 过期，删除
+			delete(c.data, key)
+			node.prev.next = node.next
+			node.next.prev = node.prev
+		}
 		return nil, false
 	}
-	return entry.ips, true
+	c.moveToHead(node)
+	return node.ips, true
 }
 
 // Set 设置缓存
@@ -163,19 +204,44 @@ func (c *LRUCache) Set(key string, ips []net.IP, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.data[key] = cacheEntry{
+	if node, ok := c.data[key]; ok {
+		// 更新已有节点
+		node.ips = ips
+		node.expiresAt = time.Now().Add(ttl)
+		c.moveToHead(node)
+		return
+	}
+
+	// 新节点
+	node := &lruNode{
+		key:       key,
 		ips:       ips,
 		expiresAt: time.Now().Add(ttl),
+	}
+	c.data[key] = node
+	// 插入头部
+	node.next = c.head.next
+	node.prev = c.head
+	c.head.next.prev = node
+	c.head.next = node
+
+	// 超出容量，淘汰尾部
+	if len(c.data) > c.capacity {
+		tail := c.removeTail()
+		if tail != nil {
+			delete(c.data, tail.key)
+		}
 	}
 }
 
 // FakeIPPool Fake-IP池
 type FakeIPPool struct {
-	prefix string
-	mu     sync.RWMutex
+	prefix   string
+	mu       sync.RWMutex
 	hostToIP map[string]net.IP
 	ipToHost map[string]string
-	counter uint32
+	counter  uint32
+	maxIP    uint32
 }
 
 // NewFakeIPPool 创建Fake-IP池
@@ -185,6 +251,7 @@ func NewFakeIPPool(rangeStr string) *FakeIPPool {
 		hostToIP: make(map[string]net.IP),
 		ipToHost: make(map[string]string),
 		counter:  1,
+		maxIP:    254, // 198.18.0.1 - 198.18.0.254
 	}
 }
 
@@ -203,6 +270,11 @@ func (p *FakeIPPool) Get(host string) net.IP {
 	// 再次检查
 	if ip, ok := p.hostToIP[host]; ok {
 		return ip
+	}
+
+	// 上限检查
+	if p.counter > p.maxIP {
+		p.counter = 1
 	}
 
 	// 分配新IP

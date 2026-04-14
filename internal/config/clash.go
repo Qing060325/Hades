@@ -54,12 +54,11 @@ type ClashConfig struct {
 
 	// GeoData
 	GeoXURL    map[string]string `yaml:"geox-url"`
-	GeoDataMode bool             `yaml:"geodata-mode"`
+	GeodataMode bool             `yaml:"geodata-mode"`
 
 	// Clash 特有字段 (兼容)
 	UnifiedDelay    bool   `yaml:"unified-delay"`
 	TcpConcurrent   bool   `yaml:"tcp-concurrent"`
-	GeodataMode     bool   `yaml:"geodata-mode"`
 	FindProcessMode string `yaml:"find-process-mode"`
 }
 
@@ -220,7 +219,7 @@ func convertClashToHades(clash *ClashConfig) *Config {
 
 	// GeoData
 	cfg.GeoXURL = clash.GeoXURL
-	cfg.GeoDataMode = clash.GeoDataMode
+	cfg.GeoDataMode = clash.GeodataMode
 
 	return cfg
 }

@@ -118,6 +118,18 @@ setup_config() {
 # 设置 Systemd 服务
 setup_service() {
     print_info "配置 Systemd 服务..."
+
+    # 创建专用 hades 用户（如不存在）
+    if ! id hades &>/dev/null; then
+        print_info "创建 hades 用户..."
+        useradd --system --no-create-home --shell /usr/sbin/nologin hades
+    fi
+
+    # 确保目录权限正确
+    mkdir -p "${CONFIG_DIR}"
+    mkdir -p "${LOG_DIR}"
+    chown -R hades:hades "${CONFIG_DIR}" "${LOG_DIR}"
+
     cat > "$SERVICE_FILE" << EOF
 [Unit]
 Description=Hades Proxy Kernel
@@ -125,7 +137,8 @@ After=network.target
 
 [Service]
 Type=simple
-User=root
+User=hades
+Group=hades
 ExecStart=${INSTALL_DIR}/hades -c ${CONFIG_DIR}/config.yaml
 Restart=on-failure
 RestartSec=5s
@@ -136,7 +149,7 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
     systemctl enable hades
-    print_success "Systemd 服务已注册并启用。"
+    print_success "Systemd 服务已注册并启用（以 hades 用户运行）。"
 }
 
 # 管理功能

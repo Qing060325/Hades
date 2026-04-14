@@ -5,6 +5,7 @@ package wireguard
 import (
 	"context"
 	"crypto/cipher"
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -12,9 +13,7 @@ import (
 	"time"
 
 	"github.com/hades/hades/pkg/core/adapter"
-	"golang.org/x/crypto/blake2s"
 	"golang.org/x/crypto/curve25519"
-	"golang.org/x/crypto/poly1305"
 )
 
 // Adapter WireGuard 适配器
@@ -266,8 +265,11 @@ func (a *Adapter) parsePreSharedKey(key string) {
 
 // decodeKey 解码 Base64 密钥
 func decodeKey(key string) ([]byte, error) {
-	// 这里简化实现
-	return []byte(key), nil
+	decoded, err := base64.StdEncoding.DecodeString(key)
+	if err != nil {
+		return nil, fmt.Errorf("base64 解码失败: %w", err)
+	}
+	return decoded, nil
 }
 
 // wireguardConn WireGuard 连接封装
@@ -374,6 +376,4 @@ func (c *wireguardConn) SetWriteDeadline(t time.Time) error {
 	return c.conn.SetWriteDeadline(t)
 }
 
-// 使用 blake2s 和 poly1305
-var _ = blake2s.Size
-var _ = poly1305.TagSize
+

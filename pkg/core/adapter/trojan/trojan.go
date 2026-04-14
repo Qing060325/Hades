@@ -2,15 +2,13 @@
 package trojan
 
 import (
-	"bufio"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
-	"strings"
 	"time"
 
 	"github.com/hades/hades/pkg/core/adapter"
@@ -218,9 +216,18 @@ func (a *Adapter) handshake(conn net.Conn, metadata *adapter.Metadata) error {
 
 // tlsWrap TLS 封装
 func (a *Adapter) tlsWrap(conn net.Conn) net.Conn {
-	// TODO: 完整 TLS 实现
-	// 包括 Reality 支持、uTLS 指纹模拟等
-	return conn
+	serverName := a.sni
+	if serverName == "" {
+		serverName = a.server
+	}
+	tlsConfig := &tls.Config{
+		ServerName: serverName,
+		MinVersion: tls.VersionTLS12,
+	}
+	if a.skipCertVerify {
+		tlsConfig.InsecureSkipVerify = true
+	}
+	return tls.Client(conn, tlsConfig)
 }
 
 // packAddress 打包地址
@@ -382,7 +389,4 @@ func Relay(left, right net.Conn) {
 	right.Close()
 }
 
-// _ = strings, rand, bufio import (suppress warnings)
-var _ = strings.TrimSpace
-var _ = rand.Read
-var _ = bufio.NewReaderSize
+

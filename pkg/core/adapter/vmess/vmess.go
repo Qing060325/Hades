@@ -6,6 +6,7 @@ import (
 	"crypto/aes"
 	"crypto/md5"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/hades/hades/pkg/core/adapter"
 	"github.com/hades/hades/pkg/perf/pool"
+	"github.com/hades/hades/pkg/transport"
 )
 
 const (
@@ -239,14 +241,32 @@ func (a *Adapter) aeadHandshake(conn net.Conn, hdr *header) error {
 
 // tlsWrap TLS 封装
 func (a *Adapter) tlsWrap(conn net.Conn) net.Conn {
-	// TODO: 实现 TLS 握手
-	return conn
+	serverName := a.sni
+	if serverName == "" {
+		serverName = a.server
+	}
+	tlsConn := tls.Client(conn, &tls.Config{
+		ServerName: serverName,
+		MinVersion: tls.VersionTLS12,
+	})
+	return tlsConn
 }
 
 // wsWrap WebSocket 封装
 func (a *Adapter) wsWrap(conn net.Conn) net.Conn {
-	// TODO: 实现 WebSocket 握手
-	return conn
+	host := a.wsHost
+	if host == "" {
+		host = a.server
+	}
+	headers := map[string]string{
+		"Host": host,
+	}
+	wsConn, err := transport.NewWebSocketConn(conn, a.wsPath, host, headers)
+	if err != nil {
+		conn.Close()
+		return conn
+	}
+	return wsConn
 }
 
 // parseUUID 解析 UUID

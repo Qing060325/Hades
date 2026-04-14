@@ -25,29 +25,33 @@ func NewTCPConn(conn net.Conn) *TCPConn {
 
 // RelayTCP TCP 双向转发
 func RelayTCP(left, right net.Conn) error {
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	var copyErr error
+	errCh := make(chan error, 2)
 
 	go func() {
-		defer wg.Done()
 		buf := pool.GetLarge()
 		defer pool.Put(buf)
-		_, copyErr = io.CopyBuffer(left, right, buf)
+		_, err := io.CopyBuffer(left, right, buf)
 		left.Close()
+		errCh <- err
 	}()
 
 	go func() {
-		defer wg.Done()
 		buf := pool.GetLarge()
 		defer pool.Put(buf)
-		_, copyErr = io.CopyBuffer(right, left, buf)
+		_, err := io.CopyBuffer(right, left, buf)
 		right.Close()
+		errCh <- err
 	}()
 
-	wg.Wait()
-	return copyErr
+	// 等待两个方向都完成
+	err1 := <-errCh
+	err2 := <-errCh
+
+	// 返回第一个非 nil 错误
+	if err1 != nil {
+		return err1
+	}
+	return err2
 }
 
 // RelayTCPZeroCopy TCP 零拷贝双向转发 (Linux)
