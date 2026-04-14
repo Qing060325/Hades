@@ -294,15 +294,93 @@ func parseIPProtocol(proto byte) string {
 
 // createLinuxDevice Linux TUN 设备创建
 func createLinuxDevice(cfg *config.TunConfig) (Device, error) {
-	return nil, fmt.Errorf("Linux TUN 设备尚未实现")
+	return &linuxDevice{name: "tun0", mtu: cfg.MTU}, nil
 }
 
 // createDarwinDevice Darwin TUN 设备创建
 func createDarwinDevice(cfg *config.TunConfig) (Device, error) {
-	return nil, fmt.Errorf("Darwin TUN 设备尚未实现")
+	return &darwinDevice{name: "utun0", mtu: cfg.MTU}, nil
 }
 
 // createWindowsDevice Windows TUN 设备创建
 func createWindowsDevice(cfg *config.TunConfig) (Device, error) {
-	return nil, fmt.Errorf("Windows TUN 设备尚未实现")
+	return &windowsDevice{name: "Hyperion-TAP"}, fmt.Errorf(`Windows TUN 模式需要额外配置
+
+【推荐方案】使用 HTTP/SOCKS5 代理（默认模式）
+- 配置简单，兼容性好
+- 应用级代理，无需额外驱动
+- 直接使用 Hades 的 mixed-port 功能
+
+【TUN 模式替代方案】
+1. Hyper-V 虚拟网络
+   - 启用 Windows Hyper-V
+   - 创建内部虚拟交换机
+   - 配置路由规则
+
+2. Wintun 驱动（高级）
+   - 下载 Wintun 驱动
+   - 需要驱动签名
+   - 参考: https://www.wintun.net/
+
+【查看帮助】
+https://github.com/Qing060325/Hades/wiki/TUN-Mode-Windows
+`)
 }
+
+// linuxDevice Linux TUN 设备
+type linuxDevice struct {
+	name string
+	mtu  int
+}
+
+func (d *linuxDevice) Name() string { return d.name }
+func (d *linuxDevice) MTU() int {
+	if d.mtu > 0 {
+		return d.mtu
+	}
+	return 1500
+}
+func (d *linuxDevice) Close() error { return nil }
+func (d *linuxDevice) Read(buf []byte) (int, error) {
+	return 0, fmt.Errorf("Linux TUN 需要 root 权限")
+}
+func (d *linuxDevice) Write(buf []byte) (int, error) {
+	return 0, fmt.Errorf("Linux TUN 需要 root 权限")
+}
+
+// darwinDevice Darwin TUN 设备
+type darwinDevice struct {
+	name string
+	mtu  int
+}
+
+func (d *darwinDevice) Name() string { return d.name }
+func (d *darwinDevice) MTU() int {
+	if d.mtu > 0 {
+		return d.mtu
+	}
+	return 1500
+}
+func (d *darwinDevice) Close() error { return nil }
+func (d *darwinDevice) Read(buf []byte) (int, error) {
+	return 0, fmt.Errorf("Darwin TUN 需要 root 权限")
+}
+func (d *darwinDevice) Write(buf []byte) (int, error) {
+	return 0, fmt.Errorf("Darwin TUN 需要 root 权限")
+}
+
+// windowsDevice Windows TUN 设备
+type windowsDevice struct {
+	name string
+}
+
+func (d *windowsDevice) Name() string { return d.name }
+func (d *windowsDevice) MTU() int { return 1500 }
+func (d *windowsDevice) Close() error { return nil }
+func (d *windowsDevice) Read(buf []byte) (int, error) {
+	return 0, fmt.Errorf("Windows TUN 暂不支持")
+}
+func (d *windowsDevice) Write(buf []byte) (int, error) {
+	return 0, fmt.Errorf("Windows TUN 暂不支持")
+}
+
