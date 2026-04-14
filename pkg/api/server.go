@@ -8,8 +8,11 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/Qing060325/Hades/internal/version"
 	"github.com/Qing060325/Hades/pkg/core/adapter"
@@ -532,23 +535,7 @@ func performUpgrade(downloadURL, version string) {
 	upgradeStatus["progress"] = 0
 	upgradeMu.Unlock()
 
-	// 下载新二进制文件
-	tmpFile := "/tmp/hades-new"
-	if err := downloadFile(tmpFile, downloadURL); err != nil {
-		upgradeMu.Lock()
-		upgradeStatus["status"] = "failed"
-		upgradeStatus["message"] = fmt.Sprintf("下载失败: %v", err)
-		upgradeMu.Unlock()
-		return
-	}
-
-	upgradeMu.Lock()
-	upgradeStatus["status"] = "installing"
-	upgradeStatus["message"] = "正在安装..."
-	upgradeStatus["progress"] = 80
-	upgradeMu.Unlock()
-
-	// 替换当前二进制文件
+	// 获取当前可执行文件路径
 	exePath, err := os.Executable()
 	if err != nil {
 		upgradeMu.Lock()
@@ -558,29 +545,106 @@ func performUpgrade(downloadURL, version string) {
 		return
 	}
 
-	// 备份旧版本
-	backupPath := exePath + ".backup"
-	os.Rename(exePath, backupPath)
+	// 确定临时文件的扩展名
+	tmpExt := ""
+	if runtime.GOOS == "windows" {
+		tmpExt = ".exe"
+	}
 
-	// 移动新版本
-	if err := os.Rename(tmpFile, exePath); err != nil {
-		// 恢复备份
-		os.Rename(backupPath, exePath)
+	// 使用系统临时目录（兼容 Windows）
+	tmpDir := os.TempDir()
+	tmpFile := filepath.Join(tmpDir, fmt.Sprintf("hades-upgrade-%s%s", version, tmpExt))
+	tmpFile = tmpFile + ".tmp" // 确保文件不存在
+
+	// 下载新二进制文件
+	if err := downloadFile(tmpFile, downloadURL); err != nil {
 		upgradeMu.Lock()
 		upgradeStatus["status"] = "failed"
-		upgradeStatus["message"] = fmt.Sprintf("安装失败: %v", err)
+		upgradeStatus["message"] = fmt.Sprintf("下载失败: %v", err)
 		upgradeMu.Unlock()
+		// 清理临时文件
+		os.Remove(tmpFile)
 		return
 	}
 
-	// 设置可执行权限
-	os.Chmod(exePath, 0755)
+	upgradeMu.Lock()
+	upgradeStatus["status"] = "installing"
+	upgradeStatus["message"] = "正在安装..."
+	upgradeStatus["progress"] = 80
+	upgradeMu.Unlock()
+
+	// 备份旧版本
+	backupPath := exePath + ".backup"
+	backupExists := false
+	if _, err := os.Stat(backupPath); err == nil {
+		backupExists = true
+	}
+
+	// 移动新版本到目标位置
+	// Windows 不允许对正在运行的 exe 执行 Rename，所以我们用 Copy + Delete 的方式
+	if runtime.GOOS == "windows" {
+		// Windows: 先复制，再删除原文件
+		if err := copyFile(tmpFile, exePath); err != nil {
+			os.Remove(tmpFile)
+			upgradeMu.Lock()
+			upgradeStatus["status"] = "failed"
+			upgradeStatus["message"] = fmt.Sprintf("安装失败: %v", err)
+			upgradeMu.Unlock()
+			return
+		}
+		// 尝试删除备份（忽略错误）
+		if backupExists {
+			os.Remove(backupPath)
+		}
+		// 重命名旧版本作为备份（如果原文件已不存在）
+		if _, err := os.Stat(exePath + ".old"); os.IsNotExist(err) {
+			// 原文件已更新，不需要备份
+		}
+	} else {
+		// Unix-like: 使用 Rename
+		// 先备份旧版本
+		if _, err := os.Stat(exePath); err == nil {
+			os.Rename(exePath, backupPath)
+		}
+
+		if err := os.Rename(tmpFile, exePath); err != nil {
+			// 恢复备份
+			if _, err := os.Stat(backupPath); err == nil {
+				os.Rename(backupPath, exePath)
+			}
+			upgradeMu.Lock()
+			upgradeStatus["status"] = "failed"
+			upgradeStatus["message"] = fmt.Sprintf("安装失败: %v", err)
+			upgradeMu.Unlock()
+			return
+		}
+	}
+
+	// 设置可执行权限（Unix 系统需要）
+	if runtime.GOOS != "windows" {
+		os.Chmod(exePath, 0755)
+	}
+
+	// 清理临时文件
+	os.Remove(tmpFile)
 
 	upgradeMu.Lock()
 	upgradeStatus["status"] = "completed"
-	upgradeStatus["message"] = fmt.Sprintf("已升级到 %s，请重启服务", version)
+	if runtime.GOOS == "windows" {
+		upgradeStatus["message"] = fmt.Sprintf("已升级到 %s，请手动重启服务", version)
+	} else {
+		upgradeStatus["message"] = fmt.Sprintf("已升级到 %s，服务将自动重启", version)
+	}
 	upgradeStatus["progress"] = 100
 	upgradeMu.Unlock()
+
+	// 在非 Windows 系统上，自动重启
+	if runtime.GOOS != "windows" {
+		// 给一点时间让状态被获取
+		time.Sleep(2 * time.Second)
+		// 发送重启信号
+		syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
+	}
 }
 
 // getUpgradeStatus 获取升级状态
@@ -616,4 +680,29 @@ func downloadFile(filepath string, url string) error {
 
 	_, err = io.Copy(out, resp.Body)
 	return err
+}
+
+// copyFile 复制文件（用于 Windows 上的热升级）
+func copyFile(src, dst string) error {
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer sourceFile.Close()
+
+	// 创建目标文件
+	destFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destFile.Close()
+
+	// 复制内容
+	_, err = io.Copy(destFile, sourceFile)
+	if err != nil {
+		return err
+	}
+
+	// 确保写入磁盘
+	return destFile.Sync()
 }

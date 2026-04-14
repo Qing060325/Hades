@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/kardianos/service v1.2.4 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.19 // indirect
 )
