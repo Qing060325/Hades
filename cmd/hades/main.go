@@ -190,7 +190,7 @@ func handleServiceCommand(action string) {
 
 // printUsage 打印使用说明
 func printUsage() {
-	fmt.Println(`
+	fmt.Print(`
 Hades 代理内核 - 使用说明
 
 用法:

@@ -193,8 +193,9 @@ func (r *MatchRule) Type() RuleType {
 
 // Engine 规则引擎
 type Engine struct {
-	rules       []Rule
-	ruleSets    map[string]RuleSet
+	rules     []Rule
+	ruleSets  map[string]RuleSet
+	providers []RuleSet // 规则集提供者
 }
 
 // RuleSet 规则集接口
@@ -207,8 +208,9 @@ type RuleSet interface {
 // NewEngine 创建规则引擎
 func NewEngine(ruleStrs []string) *Engine {
 	engine := &Engine{
-		rules:    make([]Rule, 0),
-		ruleSets: make(map[string]RuleSet),
+		rules:     make([]Rule, 0),
+		ruleSets:  make(map[string]RuleSet),
+		providers: make([]RuleSet, 0),
 	}
 
 	// 解析规则
@@ -220,6 +222,13 @@ func NewEngine(ruleStrs []string) *Engine {
 		engine.rules = append(engine.rules, rule)
 	}
 
+	return engine
+}
+
+// NewEngineWithProviders 创建包含 Provider 规则的引擎
+func NewEngineWithProviders(ruleStrs []string, providerRules []Rule) *Engine {
+	engine := NewEngine(ruleStrs)
+	engine.rules = append(engine.rules, providerRules...)
 	return engine
 }
 
@@ -297,6 +306,11 @@ func ParseRule(ruleStr string) (Rule, error) {
 	default:
 		return nil, ErrUnknownRuleType
 	}
+}
+
+// Rules 返回所有规则列表
+func (e *Engine) Rules() []Rule {
+	return e.rules
 }
 
 // RuleProviderConfig 规则提供者配置 (占位)

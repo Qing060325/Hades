@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,6 +40,24 @@ type Server struct {
 
 	// 配置重载回调
 	reloadFunc ReloadFunc
+
+	// 规则集提供者管理器
+	providerMgr RuleProviderManager
+}
+
+// RuleProviderManager 规则集提供者管理器接口
+type RuleProviderManager interface {
+	Reload(name string) error
+	ReloadAll() error
+	Stats() map[string]RuleProviderStats
+}
+
+// RuleProviderStats 提供者统计
+type RuleProviderStats struct {
+	Type      string `json:"type"`
+	Behavior  string `json:"behavior"`
+	Count     int    `json:"count"`
+	UpdatedAt string `json:"updatedAt"`
 }
 
 // ReloadFunc 配置重载回调函数类型
@@ -76,6 +95,11 @@ func (s *Server) SetSubscriptionManager(subMgr SubscriptionManager) {
 // SetReloadFunc 设置配置重载回调
 func (s *Server) SetReloadFunc(f ReloadFunc) {
 	s.reloadFunc = f
+}
+
+// SetProviderManager 设置规则集提供者管理器
+func (s *Server) SetProviderManager(mgr RuleProviderManager) {
+	s.providerMgr = mgr
 }
 
 // ListenAndServe 启动 API 服务器
@@ -122,6 +146,10 @@ func (s *Server) ListenAndServe() error {
 	// 系统升级
 	mux.HandleFunc("/upgrade", s.handleUpgrade)
 	mux.HandleFunc("/upgrade/status", s.handleUpgradeStatus)
+
+	// 规则集提供者
+	mux.HandleFunc("/providers/rules", s.handleRuleProviders)
+	mux.HandleFunc("/providers/rules/", s.handleRuleProvider)
 
 	// Prometheus 指标（注册自定义收集器）
 	if s.statsMgr != nil {
@@ -802,4 +830,83 @@ func copyFile(src, dst string) error {
 
 	// 确保写入磁盘
 	return destFile.Sync()
+}
+
+// handleRuleProviders 处理规则集提供者列表
+func (s *Server) handleRuleProviders(w http.ResponseWriter, r *http.Request) {
+	if s.providerMgr == nil {
+		s.writeJSON(w, http.StatusOK, map[string]interface{}{"providers": []interface{}{}})
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		stats := s.providerMgr.Stats()
+		providers := make([]map[string]interface{}, 0, len(stats))
+		for name, stat := range stats {
+			providers = append(providers, map[string]interface{}{
+				"name":     name,
+				"type":     stat.Type,
+				"behavior": stat.Behavior,
+				"count":    stat.Count,
+				"updatedAt": stat.UpdatedAt,
+			})
+		}
+		s.writeJSON(w, http.StatusOK, map[string]interface{}{"providers": providers})
+
+	case http.MethodPut:
+		// 重载所有提供者
+		if err := s.providerMgr.ReloadAll(); err != nil {
+			s.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		s.writeJSON(w, http.StatusOK, map[string]string{"message": "所有规则集已重载"})
+
+	default:
+		s.writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "方法不允许"})
+	}
+}
+
+// handleRuleProvider 处理单个规则集提供者
+func (s *Server) handleRuleProvider(w http.ResponseWriter, r *http.Request) {
+	if s.providerMgr == nil {
+		s.writeJSON(w, http.StatusNotFound, map[string]string{"error": "规则集提供者未初始化"})
+		return
+	}
+
+	// 提取提供者名称: /providers/rules/{name}
+	path := strings.TrimPrefix(r.URL.Path, "/providers/rules/")
+	name := strings.TrimSuffix(path, "/")
+	if name == "" {
+		s.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "缺少提供者名称"})
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		stats := s.providerMgr.Stats()
+		stat, ok := stats[name]
+		if !ok {
+			s.writeJSON(w, http.StatusNotFound, map[string]string{"error": "提供者不存在"})
+			return
+		}
+		s.writeJSON(w, http.StatusOK, map[string]interface{}{
+			"name":     name,
+			"type":     stat.Type,
+			"behavior": stat.Behavior,
+			"count":    stat.Count,
+			"updatedAt": stat.UpdatedAt,
+		})
+
+	case http.MethodPut:
+		// 重载指定提供者
+		if err := s.providerMgr.Reload(name); err != nil {
+			s.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		s.writeJSON(w, http.StatusOK, map[string]string{"message": fmt.Sprintf("规则集 %s 已重载", name)})
+
+	default:
+		s.writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "方法不允许"})
+	}
 }

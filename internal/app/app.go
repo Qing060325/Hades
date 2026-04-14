@@ -23,6 +23,8 @@ import (
 	"github.com/Qing060325/Hades/pkg/core/listener"
 	"github.com/Qing060325/Hades/pkg/core/listener/tun"
 	"github.com/Qing060325/Hades/pkg/core/rules"
+	"github.com/Qing060325/Hades/pkg/core/rules/provider"
+	"github.com/Qing060325/Hades/pkg/ebpf"
 	"github.com/Qing060325/Hades/pkg/sniffer"
 	"github.com/Qing060325/Hades/pkg/stats"
 	"github.com/rs/zerolog/log"
@@ -45,6 +47,8 @@ type App struct {
 	statsManager    *stats.Manager
 	apiServer       *api.Server
 	sniffer         *sniffer.Sniffer
+	ebpfManager     *ebpf.Manager
+	providerMgr     *provider.Manager
 }
 
 // New 创建应用实例
@@ -110,6 +114,21 @@ func (a *App) initComponents() error {
 		a.apiServer = api.NewServer(a.cfg.ExternalController, a.cfg.Secret)
 		a.apiServer.SetManagers(a.adapterManager, a.groupManager, a.ruleEngine, a.statsManager)
 		a.apiServer.SetReloadFunc(a.handleConfigReload)
+		// Provider Manager 在后续初始化后设置
+	}
+
+	// 9. 初始化 eBPF 加速（仅 Linux，需要 root 权限）
+	a.ebpfManager = ebpf.NewManager()
+	if err := a.initEBPF(); err != nil {
+		log.Warn().Err(err).Msg("[eBPF] 初始化失败，将使用用户态转发")
+	}
+
+	// 10. 初始化 Rule Provider
+	a.providerMgr = provider.NewManager()
+	if len(a.cfg.RuleProviders) > 0 {
+		if err := a.initProviders(); err != nil {
+			log.Warn().Err(err).Msg("[RuleProvider] 初始化失败")
+		}
 	}
 
 	return nil
@@ -401,6 +420,14 @@ func (a *App) Start() error {
 	// 启动代理组健康检查
 	a.startHealthChecks()
 
+	// 同步 eBPF 规则
+	a.syncEBPFRules()
+
+	// 启动 Rule Provider 自动刷新
+	if a.providerMgr != nil {
+		a.providerMgr.StartAll()
+	}
+
 	log.Info().Msg("代理内核启动完成")
 	return nil
 }
@@ -506,6 +533,16 @@ func (a *App) Stop() error {
 		a.listenerManager.Close()
 	}
 
+	// 停止 Rule Provider
+	if a.providerMgr != nil {
+		a.providerMgr.StopAll()
+	}
+
+	// 停止 eBPF
+	if a.ebpfManager != nil {
+		a.ebpfManager.Close()
+	}
+
 	log.Info().Msg("代理内核已关闭")
 	return nil
 }
@@ -551,12 +588,15 @@ func (a *App) ReloadConfig(cfg *config.Config) error {
 	// 4. 更新监听器的管理器引用
 	a.listenerManager.UpdateManagers(a.adapterManager, a.ruleEngine, a.groupManager)
 
-	// 5. 更新 API 服务器的管理器引用
+	// 5. 同步 eBPF 规则
+	a.syncEBPFRules()
+
+	// 6. 更新 API 服务器的管理器引用
 	if a.apiServer != nil {
 		a.apiServer.SetManagers(a.adapterManager, a.groupManager, a.ruleEngine, a.statsManager)
 	}
 
-	// 6. 更新配置引用
+	// 7. 更新配置引用
 	a.cfg = cfg
 
 	log.Info().Msg("配置热重载完成")
@@ -576,4 +616,104 @@ func (a *App) handleConfigReload(configData []byte) error {
 	}
 
 	return a.ReloadConfig(cfg)
+}
+
+// initEBPF 初始化 eBPF 加速（仅 Linux）
+func (a *App) initEBPF() error {
+	if a.ebpfManager == nil {
+		return nil
+	}
+
+	// 尝试加载 eBPF 程序
+	if err := a.ebpfManager.Load(); err != nil {
+		return fmt.Errorf("加载 eBPF 程序失败: %w", err)
+	}
+
+	log.Info().Msg("[eBPF] 加速引擎已初始化")
+	return nil
+}
+
+// syncEBPFRules 同步规则到 eBPF maps
+func (a *App) syncEBPFRules() {
+	if a.ebpfManager == nil || !a.ebpfManager.IsAttached() {
+		return
+	}
+
+	syncer := ebpf.NewRuleSyncer(a.ebpfManager)
+	if err := syncer.SyncFromEngine(a.ruleEngine); err != nil {
+		log.Warn().Err(err).Msg("[eBPF] 规则同步失败")
+	}
+}
+
+// EBPFManager 返回 eBPF 管理器
+func (a *App) EBPFManager() *ebpf.Manager {
+	return a.ebpfManager
+}
+
+// initProviders 初始化规则集提供者
+func (a *App) initProviders() error {
+	if len(a.cfg.RuleProviders) == 0 {
+		return nil
+	}
+
+	if err := a.providerMgr.CreateFromConfig(a.cfg.RuleProviders); err != nil {
+		return err
+	}
+
+	// 加载所有提供者的规则
+	if err := a.providerMgr.LoadAll(); err != nil {
+		return fmt.Errorf("加载规则集失败: %w", err)
+	}
+
+	// 将 Provider 规则合并到规则引擎
+	providerRules := a.providerMgr.CollectRules()
+	if len(providerRules) > 0 {
+		a.ruleEngine = rules.NewEngineWithProviders(a.cfg.Rules, providerRules)
+		// 更新监听器的规则引擎引用
+		a.listenerManager.UpdateManagers(a.adapterManager, a.ruleEngine, a.groupManager)
+	}
+
+	log.Info().Int("providers", len(a.cfg.RuleProviders)).Msg("[RuleProvider] 初始化完成")
+
+	// 设置 API 的 Provider Manager
+	if a.apiServer != nil {
+		a.apiServer.SetProviderManager(&providerAPIAdapter{mgr: a.providerMgr})
+	}
+
+	return nil
+}
+
+// ProviderManager 返回规则集提供者管理器
+func (a *App) ProviderManager() *provider.Manager {
+	return a.providerMgr
+}
+
+// providerAPIAdapter 将 provider.Manager 适配为 api.RuleProviderManager
+type providerAPIAdapter struct {
+	mgr *provider.Manager
+}
+
+// Reload 重新加载指定提供者
+func (a *providerAPIAdapter) Reload(name string) error {
+	return a.mgr.Reload(name)
+}
+
+// ReloadAll 重新加载所有提供者
+func (a *providerAPIAdapter) ReloadAll() error {
+	return a.mgr.ReloadAll()
+}
+
+// Stats 返回统计信息
+func (a *providerAPIAdapter) Stats() map[string]api.RuleProviderStats {
+	raw := a.mgr.Stats()
+	result := make(map[string]api.RuleProviderStats, len(raw))
+	for name, s := range raw {
+		result[name] = api.RuleProviderStats{
+			Type:      s.Type,
+			Behavior:  s.Behavior,
+			Count:     s.Count,
+			UpdatedAt: s.UpdatedAt.Format(time.RFC3339),
+		}
+	}
+	return result
 }
