@@ -5,9 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"runtime"
 	"sync"
 
+	"github.com/Qing060325/Hades/internal/version"
 	"github.com/Qing060325/Hades/pkg/core/adapter"
 	"github.com/Qing060325/Hades/pkg/core/group"
 	"github.com/Qing060325/Hades/pkg/core/rules"
@@ -98,6 +102,10 @@ func (s *Server) ListenAndServe() error {
 	// 订阅管理
 	mux.HandleFunc("/subscriptions", s.handleSubscriptions)
 	mux.HandleFunc("/subscriptions/", s.handleSubscription)
+
+	// 系统升级
+	mux.HandleFunc("/upgrade", s.handleUpgrade)
+	mux.HandleFunc("/upgrade/status", s.handleUpgradeStatus)
 
 	s.server = &http.Server{
 		Addr:    s.addr,
@@ -407,4 +415,205 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	default:
 		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+// handleUpgrade 处理升级请求
+func (s *Server) handleUpgrade(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// 获取最新版本信息
+	latestVersion, downloadURL, err := getLatestVersion()
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, fmt.Sprintf("获取最新版本失败: %v", err))
+		return
+	}
+
+	// 检查是否需要升级
+	currentVersion := version.Version
+	if currentVersion == latestVersion {
+		s.writeJSON(w, http.StatusOK, map[string]interface{}{
+			"message":       "已经是最新版本",
+			"current":       currentVersion,
+			"latest":        latestVersion,
+			"need_upgrade":  false,
+		})
+		return
+	}
+
+	// 异步执行升级
+	go performUpgrade(downloadURL, latestVersion)
+
+	s.writeJSON(w, http.StatusAccepted, map[string]interface{}{
+		"message":       "升级已开始",
+		"current":       currentVersion,
+		"latest":        latestVersion,
+		"need_upgrade":  true,
+		"status":        "downloading",
+	})
+}
+
+// handleUpgradeStatus 获取升级状态
+func (s *Server) handleUpgradeStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	status := getUpgradeStatus()
+	s.writeJSON(w, http.StatusOK, status)
+}
+
+// getLatestVersion 从 GitHub 获取最新版本
+func getLatestVersion() (string, string, error) {
+	resp, err := http.Get("https://api.github.com/repos/Qing060325/Hades/releases/latest")
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("GitHub API returned %d", resp.StatusCode)
+	}
+
+	var release struct {
+		TagName string `json:"tag_name"`
+		Assets  []struct {
+			Name string `json:"name"`
+			URL  string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return "", "", err
+	}
+
+	// 根据系统架构选择下载链接
+	osType := runtime.GOOS
+	arch := runtime.GOARCH
+
+	binaryName := fmt.Sprintf("hades-%s-%s", osType, arch)
+	if osType == "windows" {
+		binaryName += ".exe"
+	}
+
+	var downloadURL string
+	for _, asset := range release.Assets {
+		if asset.Name == binaryName {
+			downloadURL = asset.URL
+			break
+		}
+	}
+
+	if downloadURL == "" {
+		return "", "", fmt.Errorf("未找到适合当前系统的二进制文件: %s", binaryName)
+	}
+
+	return release.TagName, downloadURL, nil
+}
+
+// upgradeStatus 升级状态
+var (
+	upgradeStatus = map[string]interface{}{
+		"status":  "idle", // idle, downloading, installing, completed, failed
+		"message": "",
+		"progress": 0,
+	}
+	upgradeMu sync.RWMutex
+)
+
+// performUpgrade 执行升级
+func performUpgrade(downloadURL, version string) {
+	upgradeMu.Lock()
+	upgradeStatus["status"] = "downloading"
+	upgradeStatus["message"] = "正在下载新版本..."
+	upgradeStatus["progress"] = 0
+	upgradeMu.Unlock()
+
+	// 下载新二进制文件
+	tmpFile := "/tmp/hades-new"
+	if err := downloadFile(tmpFile, downloadURL); err != nil {
+		upgradeMu.Lock()
+		upgradeStatus["status"] = "failed"
+		upgradeStatus["message"] = fmt.Sprintf("下载失败: %v", err)
+		upgradeMu.Unlock()
+		return
+	}
+
+	upgradeMu.Lock()
+	upgradeStatus["status"] = "installing"
+	upgradeStatus["message"] = "正在安装..."
+	upgradeStatus["progress"] = 80
+	upgradeMu.Unlock()
+
+	// 替换当前二进制文件
+	exePath, err := os.Executable()
+	if err != nil {
+		upgradeMu.Lock()
+		upgradeStatus["status"] = "failed"
+		upgradeStatus["message"] = fmt.Sprintf("获取当前程序路径失败: %v", err)
+		upgradeMu.Unlock()
+		return
+	}
+
+	// 备份旧版本
+	backupPath := exePath + ".backup"
+	os.Rename(exePath, backupPath)
+
+	// 移动新版本
+	if err := os.Rename(tmpFile, exePath); err != nil {
+		// 恢复备份
+		os.Rename(backupPath, exePath)
+		upgradeMu.Lock()
+		upgradeStatus["status"] = "failed"
+		upgradeStatus["message"] = fmt.Sprintf("安装失败: %v", err)
+		upgradeMu.Unlock()
+		return
+	}
+
+	// 设置可执行权限
+	os.Chmod(exePath, 0755)
+
+	upgradeMu.Lock()
+	upgradeStatus["status"] = "completed"
+	upgradeStatus["message"] = fmt.Sprintf("已升级到 %s，请重启服务", version)
+	upgradeStatus["progress"] = 100
+	upgradeMu.Unlock()
+}
+
+// getUpgradeStatus 获取升级状态
+func getUpgradeStatus() map[string]interface{} {
+	upgradeMu.RLock()
+	defer upgradeMu.RUnlock()
+
+	// 返回副本
+	status := make(map[string]interface{})
+	for k, v := range upgradeStatus {
+		status[k] = v
+	}
+	return status
+}
+
+// downloadFile 下载文件
+func downloadFile(filepath string, url string) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	out, err := os.Create(filepath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, resp.Body)
+	return err
 }
