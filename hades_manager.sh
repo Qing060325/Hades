@@ -207,7 +207,11 @@ display_status() {
 uninstall_hades() {
     check_root
     print_warning "确定要卸载 Hades 吗？(y/N)"
-    read -r confirm
+    if [ -t 0 ]; then
+        read -r confirm
+    else
+        read -r confirm </dev/tty
+    fi
     if [[ "$confirm" =~ ^[yY]$ ]]; then
         systemctl stop hades || true
         systemctl disable hades || true
@@ -238,9 +242,22 @@ show_menu() {
 }
 
 main() {
+    # 检查是否从管道执行，如果是则使用 /dev/tty 读取输入
+    if [ -t 0 ]; then
+        # 标准输入是终端，正常使用
+        READ_INPUT="read -r"
+    else
+        # 从管道执行，使用 /dev/tty
+        READ_INPUT="read -r choice </dev/tty"
+    fi
+
     while true; do
         show_menu
-        read -r choice
+        if [ -t 0 ]; then
+            read -r choice
+        else
+            read -r choice </dev/tty
+        fi
         case "$choice" in
             1) install_hades ;;
             2) start_hades ;;
