@@ -70,13 +70,39 @@ install_hades() {
     DOWNLOAD_URL="${GITHUB_API}/releases/download/${LATEST_TAG}/${BINARY_NAME}"
 
     print_info "正在下载 Hades ${LATEST_TAG}..."
-    if ! curl -L -o "/tmp/hades" "$DOWNLOAD_URL"; then
-        print_warning "二进制文件下载失败，尝试从源码构建..."
-        build_from_source
-    else
+    DOWNLOAD_TIMEOUT=60
+    MAX_RETRIES=3
+    RETRY_COUNT=0
+    DOWNLOAD_SUCCESS=false
+
+    while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$DOWNLOAD_SUCCESS" = false ]; do
+        if curl -L --max-time $DOWNLOAD_TIMEOUT -o "/tmp/hades" "$DOWNLOAD_URL" 2>/dev/null; then
+            # 校验下载的文件（检查文件大小，避免 404 JSON 响应）
+            FILE_SIZE=$(stat -c%s "/tmp/hades" 2>/dev/null || echo "0")
+            if [ "$FILE_SIZE" -lt 1000000 ]; then
+                print_warning "下载文件过小 (${FILE_SIZE} 字节)，可能是 404 错误响应"
+                RETRY_COUNT=$((RETRY_COUNT + 1))
+                if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                    print_info "等待 2 秒后重试..."
+                    sleep 2
+                fi
+            else
+                DOWNLOAD_SUCCESS=true
+            fi
+        else
+            print_warning "下载失败，等待 2 秒后重试..."
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            sleep 2
+        fi
+    done
+
+    if [ "$DOWNLOAD_SUCCESS" = true ]; then
         chmod +x /tmp/hades
         mv /tmp/hades "${INSTALL_DIR}/hades"
         print_success "二进制文件已安装到 ${INSTALL_DIR}/hades"
+    else
+        print_warning "二进制文件下载失败，尝试从源码构建..."
+        build_from_source
     fi
 
     setup_config
@@ -109,8 +135,18 @@ setup_config() {
     mkdir -p "$LOG_DIR"
     if [ ! -f "${CONFIG_DIR}/config.yaml" ]; then
         print_info "下载默认配置文件..."
-        curl -L -o "${CONFIG_DIR}/config.yaml" "${GITHUB_RAW}/configs/config.yaml" || \
-        echo "mixed-port: 7890" > "${CONFIG_DIR}/config.yaml"
+        CONFIG_TIMEOUT=30
+        if curl -L --max-time $CONFIG_TIMEOUT -o "${CONFIG_DIR}/config.yaml" "${GITHUB_RAW}/configs/config.yaml" 2>/dev/null; then
+            # 校验配置文件
+            CONFIG_SIZE=$(stat -c%s "${CONFIG_DIR}/config.yaml" 2>/dev/null || echo "0")
+            if [ "$CONFIG_SIZE" -lt 100 ]; then
+                print_warning "配置文件下载异常 (${CONFIG_SIZE} 字节)，使用默认配置"
+                echo "mixed-port: 7890" > "${CONFIG_DIR}/config.yaml"
+            fi
+        else
+            print_warning "配置文件下载超时或失败，使用默认配置"
+            echo "mixed-port: 7890" > "${CONFIG_DIR}/config.yaml"
+        fi
         print_success "配置文件已创建: ${CONFIG_DIR}/config.yaml"
     fi
 }

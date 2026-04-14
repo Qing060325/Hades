@@ -240,7 +240,8 @@ type hysteria2Conn struct {
 func (c *hysteria2Conn) Read(b []byte) (n int, err error) {
 	// 实现 Hysteria2 数据读取
 	// 实际实现需要处理 QUIC 流
-	return c.packetConn.ReadFrom(b)
+	n, _, err = c.packetConn.ReadFrom(b)
+	return n, err
 }
 
 func (c *hysteria2Conn) Write(b []byte) (n int, err error) {

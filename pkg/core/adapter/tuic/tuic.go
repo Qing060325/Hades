@@ -234,7 +234,8 @@ type tuicConn struct {
 }
 
 func (c *tuicConn) Read(b []byte) (n int, err error) {
-	return c.packetConn.ReadFrom(b)
+	n, _, err = c.packetConn.ReadFrom(b)
+	return n, err
 }
 
 func (c *tuicConn) Write(b []byte) (n int, err error) {
