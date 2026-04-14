@@ -109,6 +109,7 @@ func (a *App) initComponents() error {
 	if a.cfg.ExternalController != "" {
 		a.apiServer = api.NewServer(a.cfg.ExternalController, a.cfg.Secret)
 		a.apiServer.SetManagers(a.adapterManager, a.groupManager, a.ruleEngine, a.statsManager)
+		a.apiServer.SetReloadFunc(a.handleConfigReload)
 	}
 
 	return nil
@@ -512,4 +513,67 @@ func (a *App) Stop() error {
 // Stats 获取统计信息
 func (a *App) Stats() *stats.Manager {
 	return a.statsManager
+}
+
+// Config 获取当前配置
+func (a *App) Config() *config.Config {
+	return a.cfg
+}
+
+// ConfigPath 获取配置文件路径
+func (a *App) ConfigPath() string {
+	return a.cfg.ConfigPath
+}
+
+// ReloadConfig 热重载配置
+// 仅更新代理和规则，不重启监听器（端口变更需重启）
+func (a *App) ReloadConfig(cfg *config.Config) error {
+	log.Info().Msg("正在热重载配置...")
+
+	// 1. 重建适配器（保留内置适配器）
+	oldAdapters := a.adapterManager.All()
+	_ = oldAdapters // 保留旧适配器引用以平滑切换
+
+	a.adapterManager = adapter.NewManager()
+	if err := a.initAdapters(); err != nil {
+		return fmt.Errorf("重载适配器失败: %w", err)
+	}
+
+	// 2. 重建代理组
+	a.groupManager = group.NewManager(a.adapterManager)
+	if err := a.initGroups(); err != nil {
+		return fmt.Errorf("重载代理组失败: %w", err)
+	}
+
+	// 3. 重建规则引擎
+	a.ruleEngine = rules.NewEngine(cfg.Rules)
+
+	// 4. 更新监听器的管理器引用
+	a.listenerManager.UpdateManagers(a.adapterManager, a.ruleEngine, a.groupManager)
+
+	// 5. 更新 API 服务器的管理器引用
+	if a.apiServer != nil {
+		a.apiServer.SetManagers(a.adapterManager, a.groupManager, a.ruleEngine, a.statsManager)
+	}
+
+	// 6. 更新配置引用
+	a.cfg = cfg
+
+	log.Info().Msg("配置热重载完成")
+	return nil
+}
+
+// handleConfigReload 处理 API 触发的配置重载
+func (a *App) handleConfigReload(configData []byte) error {
+	cfg, err := config.ParseBytes(configData)
+	if err != nil {
+		return fmt.Errorf("解析配置失败: %w", err)
+	}
+
+	// 保留配置路径
+	if a.cfg.ConfigPath != "" {
+		cfg.ConfigPath = a.cfg.ConfigPath
+	}
+
+	return a.ReloadConfig(cfg)
 }

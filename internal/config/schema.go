@@ -8,6 +8,9 @@ import (
 
 // Config 主配置结构
 type Config struct {
+	// 配置文件路径（非序列化字段）
+	ConfigPath string `yaml:"-"`
+
 	// 基础配置
 	MixedPort    int    `yaml:"mixed-port"`
 	Port         int    `yaml:"port"`

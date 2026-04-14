@@ -121,6 +121,16 @@ func (m *Manager) Close() {
 	m.listeners = make(map[string]Listener)
 }
 
+// UpdateManagers 更新管理器引用（热重载时使用）
+func (m *Manager) UpdateManagers(adapterMgr *adapter.Manager, ruleEngine *rules.Engine, groupMgr *group.Manager) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.adapterManager = adapterMgr
+	m.ruleEngine = ruleEngine
+	m.groupManager = groupMgr
+}
+
 // BaseListener 基础监听器
 type BaseListener struct {
 	addr       string

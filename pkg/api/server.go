@@ -19,6 +19,8 @@ import (
 	"github.com/Qing060325/Hades/pkg/core/rules"
 	"github.com/Qing060325/Hades/pkg/stats"
 	"github.com/Qing060325/Hades/pkg/subscription"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog/log"
 )
 
@@ -34,7 +36,13 @@ type Server struct {
 	ruleEngine *rules.Engine
 	statsMgr   *stats.Manager
 	subMgr     SubscriptionManager
+
+	// 配置重载回调
+	reloadFunc ReloadFunc
 }
+
+// ReloadFunc 配置重载回调函数类型
+type ReloadFunc func(configData []byte) error
 
 // SubscriptionManager 订阅管理器接口
 type SubscriptionManager interface {
@@ -65,6 +73,11 @@ func (s *Server) SetSubscriptionManager(subMgr SubscriptionManager) {
 	s.subMgr = subMgr
 }
 
+// SetReloadFunc 设置配置重载回调
+func (s *Server) SetReloadFunc(f ReloadFunc) {
+	s.reloadFunc = f
+}
+
 // ListenAndServe 启动 API 服务器
 func (s *Server) ListenAndServe() error {
 	mux := http.NewServeMux()
@@ -73,6 +86,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/", s.handleRoot)
 	mux.HandleFunc("/version", s.handleVersion)
 	mux.HandleFunc("/config", s.handleConfig)
+	mux.HandleFunc("/configs", s.handleConfigs) // 配置热重载
 
 	// 代理相关
 	mux.HandleFunc("/proxies", s.handleProxies)
@@ -108,6 +122,16 @@ func (s *Server) ListenAndServe() error {
 	// 系统升级
 	mux.HandleFunc("/upgrade", s.handleUpgrade)
 	mux.HandleFunc("/upgrade/status", s.handleUpgradeStatus)
+
+	// Prometheus 指标（注册自定义收集器）
+	if s.statsMgr != nil {
+		registry := prometheus.NewRegistry()
+		registry.MustRegister(stats.NewPrometheusCollector(s.statsMgr))
+		registry.MustRegister(prometheus.NewGoCollector())
+		registry.MustRegister(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
+		mux.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
+		log.Info().Msg("Prometheus /metrics 端点已启用")
+	}
 
 	s.server = &http.Server{
 		Addr:    s.addr,
@@ -199,6 +223,79 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusMethodNotAllowed)
+}
+
+// handleConfigs 配置热重载
+// PUT /configs - 上传新配置并触发热重载
+// PATCH /configs - 从文件重新加载配置
+func (s *Server) handleConfigs(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPut:
+		if s.reloadFunc == nil {
+			s.writeError(w, http.StatusServiceUnavailable, "config reload not available")
+			return
+		}
+
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, "failed to read request body")
+			return
+		}
+		defer r.Body.Close()
+
+		if len(body) == 0 {
+			s.writeError(w, http.StatusBadRequest, "empty config body")
+			return
+		}
+
+		if err := s.reloadFunc(body); err != nil {
+			s.writeError(w, http.StatusBadRequest, fmt.Sprintf("config reload failed: %v", err))
+			return
+		}
+
+		s.writeJSON(w, http.StatusOK, map[string]string{
+			"message": "config reloaded successfully",
+		})
+
+	case http.MethodPatch:
+		if s.reloadFunc == nil {
+			s.writeError(w, http.StatusServiceUnavailable, "config reload not available")
+			return
+		}
+
+		// 从请求体获取配置文件路径，或使用默认路径
+		var req struct {
+			Path string `json:"path"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			s.writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+
+		configPath := req.Path
+		if configPath == "" {
+			s.writeError(w, http.StatusBadRequest, "config path is required")
+			return
+		}
+
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			s.writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to read config file: %v", err))
+			return
+		}
+
+		if err := s.reloadFunc(data); err != nil {
+			s.writeError(w, http.StatusBadRequest, fmt.Sprintf("config reload failed: %v", err))
+			return
+		}
+
+		s.writeJSON(w, http.StatusOK, map[string]string{
+			"message": "config reloaded successfully",
+		})
+
+	default:
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }
 
 // handleProxies 代理列表

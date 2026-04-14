@@ -1,0 +1,600 @@
+openapi: 3.0.3
+info:
+  title: Hades API
+  description: |
+    Hades 代理内核 RESTful API 规范。
+
+    所有需要认证的接口均通过 `Authorization: Bearer <secret>` 请求头或 `?token=<secret>` 查询参数传递。
+  version: 0.4.0
+  contact:
+    name: Qing060325
+    url: https://github.com/Qing060325/Hades
+
+servers:
+  - url: http://localhost:9090
+    description: 本地开发
+
+security:
+  - BearerAuth: []
+
+paths:
+  /:
+    get:
+      summary: 根路径
+      operationId: getRoot
+      responses:
+        "200":
+          description: API 信息
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Hades API
+                  version:
+                    type: string
+                    example: dev
+
+  /version:
+    get:
+      summary: 获取版本信息
+      operationId: getVersion
+      security: []
+      responses:
+        "200":
+          description: 版本信息
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionInfo"
+
+  /ping:
+    get:
+      summary: 健康检查
+      operationId: getPing
+      security: []
+      responses:
+        "200":
+          description: pong
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: pong
+
+  /config:
+    get:
+      summary: 获取当前配置
+      operationId: getConfig
+      responses:
+        "200":
+          description: 当前运行配置
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeConfig"
+    patch:
+      summary: 更新部分配置
+      operationId: patchConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: 配置已更新
+
+  /configs:
+    put:
+      summary: 上传完整配置并热重载
+      description: |
+        上传完整 YAML/JSON 配置并触发热重载。
+        仅更新代理、代理组和规则，不重启监听器。
+      operationId: putConfigs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+                  description: 配置文件路径
+          text/yaml:
+            schema:
+              type: string
+      responses:
+        "200":
+          description: 配置重载成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: config reloaded successfully
+        "400":
+          description: 配置重载失败
+    patch:
+      summary: 从文件重载配置
+      operationId: patchConfigs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+                  description: 配置文件路径
+                  example: /root/.config/hades/config.yaml
+      responses:
+        "200":
+          description: 配置重载成功
+
+  /proxies:
+    get:
+      summary: 获取代理列表
+      operationId: getProxies
+      responses:
+        "200":
+          description: 代理列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  proxies:
+                    type: object
+                    additionalProperties:
+                      $ref: "#/components/schemas/Proxy"
+
+  /proxies/{name}:
+    get:
+      summary: 获取代理详情
+      operationId: getProxy
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 代理详情
+        "404":
+          description: 代理不存在
+    put:
+      summary: 切换代理组选择
+      operationId: selectProxy
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  description: 选中的代理名称
+      responses:
+        "200":
+          description: 切换成功
+        "400":
+          description: 切换失败
+
+  /groups:
+    get:
+      summary: 获取代理组列表
+      operationId: getGroups
+      responses:
+        "200":
+          description: 代理组列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups:
+                    type: object
+                    additionalProperties:
+                      $ref: "#/components/schemas/ProxyGroup"
+
+  /groups/{name}:
+    put:
+      summary: 切换代理组选择
+      operationId: selectGroup
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 切换成功
+
+  /rules:
+    get:
+      summary: 获取规则列表
+      operationId: getRules
+      responses:
+        "200":
+          description: 规则列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rules:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Rule"
+
+  /connections:
+    get:
+      summary: 获取连接列表
+      operationId: getConnections
+      responses:
+        "200":
+          description: 连接列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionsInfo"
+    delete:
+      summary: 关闭所有连接
+      operationId: closeAllConnections
+      responses:
+        "200":
+          description: 已关闭所有连接
+
+  /connections/close:
+    post:
+      summary: 关闭所有连接（兼容接口）
+      operationId: closeAllConnectionsAlt
+      responses:
+        "200":
+          description: 已关闭所有连接
+
+  /traffic:
+    get:
+      summary: 获取流量统计（SSE 流）
+      operationId: getTraffic
+      description: 返回 Server-Sent Events 流，每秒推送当前上传/下载速度
+      responses:
+        "200":
+          description: SSE 流
+          content:
+            text/event-stream:
+              schema:
+                type: object
+                properties:
+                  up:
+                    type: integer
+                    format: int64
+                  down:
+                    type: integer
+                    format: int64
+
+  /dns/query:
+    get:
+      summary: DNS 查询
+      operationId: queryDNS
+      parameters:
+        - name: name
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 要查询的域名
+      responses:
+        "200":
+          description: 查询结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  ips:
+                    type: array
+                    items:
+                      type: string
+                  error:
+                    type: string
+                    nullable: true
+
+  /logs:
+    get:
+      summary: 获取日志流（SSE）
+      operationId: getLogs
+      parameters:
+        - name: level
+          in: query
+          schema:
+            type: string
+            enum: [silent, error, warning, info, debug]
+            default: info
+      responses:
+        "200":
+          description: SSE 日志流
+          content:
+            text/event-stream:
+              schema:
+                type: object
+
+  /subscriptions:
+    get:
+      summary: 获取订阅列表
+      operationId: getSubscriptions
+      responses:
+        "200":
+          description: 订阅列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subscriptions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SubscriptionInfo"
+    post:
+      summary: 更新所有订阅
+      operationId: updateAllSubscriptions
+      responses:
+        "200":
+          description: 更新成功
+
+  /subscriptions/{name}:
+    get:
+      summary: 获取订阅详情
+      operationId: getSubscription
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 订阅详情
+        "404":
+          description: 订阅不存在
+    put:
+      summary: 更新指定订阅
+      operationId: updateSubscription
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 更新成功
+
+  /upgrade:
+    post:
+      summary: 触发内核升级
+      operationId: triggerUpgrade
+      responses:
+        "202":
+          description: 升级已开始
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  current:
+                    type: string
+                  latest:
+                    type: string
+                  need_upgrade:
+                    type: boolean
+                  status:
+                    type: string
+                    example: downloading
+
+  /upgrade/status:
+    get:
+      summary: 获取升级状态
+      operationId: getUpgradeStatus
+      responses:
+        "200":
+          description: 升级状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpgradeStatus"
+
+  /metrics:
+    get:
+      summary: Prometheus 指标
+      operationId: getMetrics
+      security: []
+      description: |
+        Prometheus 格式的监控指标端点。
+
+        暴露的指标包括：
+        - `hades_upload_bytes_total` — 总上传字节数
+        - `hades_download_bytes_total` — 总下载字节数
+        - `hades_active_connections` — 当前活跃连接数
+        - `hades_connections_total` — 总连接数
+        - Go 运行时指标（goroutine、内存等）
+      responses:
+        "200":
+          description: Prometheus 指标文本
+          content:
+            text/plain:
+              schema:
+                type: string
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Hades API 密钥
+
+  schemas:
+    VersionInfo:
+      type: object
+      properties:
+        version:
+          type: string
+          example: v0.4.0
+        goVersion:
+          type: string
+          example: go1.25.0
+        buildTime:
+          type: string
+          example: "2025-01-01_00:00:00"
+
+    RuntimeConfig:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [rule, global, direct]
+          example: rule
+        logLevel:
+          type: string
+          enum: [silent, error, warning, info, debug]
+          example: info
+        tun:
+          type: object
+          properties:
+            enable:
+              type: boolean
+
+    Proxy:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [Shadowsocks, VMess, VLESS, Trojan, Hysteria2, TUIC, WireGuard, HTTP, SOCKS5, Direct, Reject]
+        addr:
+          type: string
+        udp:
+          type: boolean
+
+    ProxyGroup:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [Selector, URLTest, Fallback, LoadBalance]
+        proxies:
+          type: array
+          items:
+            $ref: "#/components/schemas/Proxy"
+        now:
+          type: string
+          description: 当前选中的代理名称
+
+    Rule:
+      type: object
+      properties:
+        type:
+          type: string
+        payload:
+          type: string
+        proxy:
+          type: string
+        size:
+          type: integer
+
+    ConnectionsInfo:
+      type: object
+      properties:
+        connections:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConnectionStat"
+        downloadTotal:
+          type: integer
+          format: int64
+        uploadTotal:
+          type: integer
+          format: int64
+
+    ConnectionStat:
+      type: object
+      properties:
+        id:
+          type: string
+        start:
+          type: string
+          format: date-time
+        host:
+          type: string
+        download:
+          type: integer
+          format: int64
+        upload:
+          type: integer
+          format: int64
+        chains:
+          type: array
+          items:
+            type: string
+        rule:
+          type: string
+        process:
+          type: string
+        uploadSpeed:
+          type: number
+        downloadSpeed:
+          type: number
+
+    SubscriptionInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+        proxyCount:
+          type: integer
+
+    UpgradeStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [idle, downloading, installing, completed, failed]
+          example: idle
+        message:
+          type: string
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
