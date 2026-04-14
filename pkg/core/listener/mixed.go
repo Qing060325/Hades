@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hades/hades/pkg/core/adapter"
-	"github.com/hades/hades/pkg/core/group"
-	"github.com/hades/hades/pkg/core/rules"
-	"github.com/hades/hades/pkg/perf/pool"
+	"github.com/Qing060325/Hades/pkg/core/adapter"
+	"github.com/Qing060325/Hades/pkg/core/group"
+	"github.com/Qing060325/Hades/pkg/core/rules"
+	"github.com/Qing060325/Hades/pkg/perf/pool"
 	"github.com/rs/zerolog/log"
 )
 

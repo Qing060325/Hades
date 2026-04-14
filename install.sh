@@ -112,6 +112,33 @@ install_binary() {
     # 尝试下载预编译二进制
     if download_file "$download_url" "$tmp_file" 2>/dev/null; then
         info "下载成功"
+
+        # SHA256 签名校验
+        local sha256_url="${download_url}.sha256"
+        local sha256_file="/tmp/${binary_name}.sha256"
+        if download_file "$sha256_url" "$sha256_file" 2>/dev/null; then
+            local expected_hash=$(cat "$sha256_file" | awk '{print $1}')
+            local actual_hash=""
+            if command -v sha256sum &> /dev/null; then
+                actual_hash=$(sha256sum "$tmp_file" | awk '{print $1}')
+            elif command -v shasum &> /dev/null; then
+                actual_hash=$(shasum -a 256 "$tmp_file" | awk '{print $1}')
+            fi
+            if [ -n "$actual_hash" ]; then
+                if [ "$expected_hash" = "$actual_hash" ]; then
+                    info "SHA256 校验通过"
+                else
+                    error "SHA256 校验失败！期望: ${expected_hash} 实际: ${actual_hash}"
+                    rm -f "$tmp_file" "$sha256_file"
+                    exit 1
+                fi
+            else
+                warn "未找到 sha256sum 或 shasum，跳过校验"
+            fi
+            rm -f "$sha256_file"
+        else
+            warn "未找到 .sha256 校验文件，跳过签名校验"
+        fi
     else
         warn "预编译二进制不可用，将本地构建..."
         build_from_source

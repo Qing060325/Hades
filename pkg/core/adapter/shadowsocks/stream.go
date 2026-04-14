@@ -8,7 +8,7 @@ import (
 	"net"
 	"sync"
 
-	"github.com/hades/hades/pkg/perf/pool"
+	"github.com/Qing060325/Hades/pkg/perf/pool"
 )
 
 // StreamConn Shadowsocks 流式加密连接

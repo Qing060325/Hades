@@ -3,7 +3,7 @@
 
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
-LDFLAGS := -ldflags "-s -w -X github.com/hades/hades/internal/version.Version=$(VERSION) -X github.com/hades/hades/internal/version.BuildTime=$(BUILD_TIME)"
+LDFLAGS := -ldflags "-s -w -X github.com/Qing060325/Hades/internal/version.Version=$(VERSION) -X github.com/Qing060325/Hades/internal/version.BuildTime=$(BUILD_TIME)"
 
 # Go 参数
 GOCMD := go
@@ -19,9 +19,11 @@ MAIN_SRC := ./cmd/hades
 
 # 目标文件
 BINARY_NAME := hades
-BINARY_LINUX := $(BIN_DIR)/$(BINARY_NAME)-linux-amd64
-BINARY_DARWIN := $(BIN_DIR)/$(BINARY_NAME)-darwin-amd64
-BINARY_WINDOWS := $(BIN_DIR)/$(BINARY_NAME)-windows-amd64.exe
+BINARY_LINUX_AMD64 := $(BIN_DIR)/$(BINARY_NAME)-linux-amd64
+BINARY_LINUX_ARM64 := $(BIN_DIR)/$(BINARY_NAME)-linux-arm64
+BINARY_DARWIN_AMD64 := $(BIN_DIR)/$(BINARY_NAME)-darwin-amd64
+BINARY_DARWIN_ARM64 := $(BIN_DIR)/$(BINARY_NAME)-darwin-arm64
+BINARY_WINDOWS_AMD64 := $(BIN_DIR)/$(BINARY_NAME)-windows-amd64.exe
 
 .PHONY: all build clean test deps cross-compile
 
@@ -37,9 +39,11 @@ build:
 cross-compile:
 	@echo "Cross compiling..."
 	@mkdir -p $(BIN_DIR)
-	GOOS=linux GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_LINUX) $(MAIN_SRC)
-	GOOS=darwin GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_DARWIN) $(MAIN_SRC)
-	GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_WINDOWS) $(MAIN_SRC)
+	GOOS=linux GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_LINUX_AMD64) $(MAIN_SRC)
+	GOOS=linux GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_LINUX_ARM64) $(MAIN_SRC)
+	GOOS=darwin GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_DARWIN_AMD64) $(MAIN_SRC)
+	GOOS=darwin GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_DARWIN_ARM64) $(MAIN_SRC)
+	GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_WINDOWS_AMD64) $(MAIN_SRC)
 	@echo "Cross compilation complete!"
 
 ## 运行测试

@@ -10,8 +10,8 @@ import (
 	"net"
 	"time"
 
-	"github.com/hades/hades/pkg/core/adapter"
-	"github.com/hades/hades/pkg/perf/pool"
+	"github.com/Qing060325/Hades/pkg/core/adapter"
+	"github.com/Qing060325/Hades/pkg/perf/pool"
 )
 
 const (

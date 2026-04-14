@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/hades/hades/pkg/core/adapter"
+	"github.com/Qing060325/Hades/pkg/core/adapter"
 )
 
 // RuleType 规则类型

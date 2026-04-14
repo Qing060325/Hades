@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hades/hades/internal/config"
+	"github.com/Qing060325/Hades/internal/config"
 	"github.com/rs/zerolog/log"
 )
 

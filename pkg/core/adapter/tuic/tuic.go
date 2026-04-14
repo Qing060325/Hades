@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hades/hades/pkg/core/adapter"
+	"github.com/Qing060325/Hades/pkg/core/adapter"
 )
 
 // CongestionController 拥塞控制算法

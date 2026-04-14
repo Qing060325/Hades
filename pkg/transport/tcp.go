@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hades/hades/pkg/perf/pool"
-	"github.com/hades/hades/pkg/perf/zerocopy"
+	"github.com/Qing060325/Hades/pkg/perf/pool"
+	"github.com/Qing060325/Hades/pkg/perf/zerocopy"
 )
 
 // TCPConn TCP 连接封装

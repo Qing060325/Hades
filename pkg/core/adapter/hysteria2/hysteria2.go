@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hades/hades/pkg/core/adapter"
+	"github.com/Qing060325/Hades/pkg/core/adapter"
 )
 
 // Adapter Hysteria2 适配器

@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hades/hades/pkg/core/adapter"
+	"github.com/Qing060325/Hades/pkg/core/adapter"
 	"golang.org/x/crypto/curve25519"
 )
 
@@ -186,22 +186,16 @@ func (a *Adapter) URLTest(ctx context.Context, testURL string) (time.Duration, e
 
 // handshake 执行 WireGuard 握手
 func (a *Adapter) handshake(ctx context.Context, conn net.Conn) error {
-	// WireGuard 握手协议
-	// 1. 发送 Initiation 消息
-	// 2. 接收 Response 消息
-	// 3. 发送 Confirmation 消息
+	// TODO: 实现完整的 WireGuard Noise_IK 握手
+	// WireGuard 握手协议:
+	// 1. 生成临时 curve25519 密钥对
+	// 2. 构建 Initiation 消息 (sender_index + ephemeral + static + timestamp + MAC)
+	// 3. 发送 Initiation 消息并等待 Response
+	// 4. 从 Response 中解密得到接收方 sender_index 和传输密钥
+	// 5. 使用 HKDF 从 shared_secret 派生 sendingKey 和 receivingKey (ChaCha20-Poly1305)
+	// 6. 发送 Confirmation 消息完成握手
 
-	// 生成临时密钥对
-	var ephemeralPrivate, ephemeralPublic [32]byte
-	// 这里简化实现，实际需要使用 curve25519 生成
-
-	// 计算 DH 共享密钥
-	_ = ephemeralPrivate
-	_ = ephemeralPublic
-
-	// 构建握手消息
-	// WireGuard 使用 Noise_IK 模式
-
+	// 当前为骨架实现，密钥派生和 AEAD 初始化待补充
 	return nil
 }
 
@@ -286,6 +280,10 @@ type wireguardConn struct {
 }
 
 func (c *wireguardConn) Read(b []byte) (n int, err error) {
+	if c.recvAEAD == nil {
+		return 0, fmt.Errorf("WireGuard: recvAEAD 未初始化，握手未完成")
+	}
+
 	// 解密 WireGuard 数据包
 	buf := make([]byte, c.adapter.mtu)
 	n, err = c.conn.Read(buf)
@@ -311,7 +309,6 @@ func (c *wireguardConn) Read(b []byte) (n int, err error) {
 	// 解密数据
 	// 使用 AEAD 解密 (ChaCha20-Poly1305)
 	_ = counter
-	_ = c.recvAEAD
 
 	// 简化实现: 直接返回数据
 	copy(b, buf[12:])
@@ -319,6 +316,10 @@ func (c *wireguardConn) Read(b []byte) (n int, err error) {
 }
 
 func (c *wireguardConn) Write(b []byte) (n int, err error) {
+	if c.sendAEAD == nil {
+		return 0, fmt.Errorf("WireGuard: sendAEAD 未初始化，握手未完成")
+	}
+
 	// 加密 WireGuard 数据包
 	c.mu.Lock()
 	c.nonce++

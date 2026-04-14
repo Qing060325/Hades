@@ -1,4 +1,4 @@
-module github.com/hades/hades
+module github.com/Qing060325/Hades
 
 go 1.23
 

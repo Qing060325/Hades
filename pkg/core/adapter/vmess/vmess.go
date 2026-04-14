@@ -4,8 +4,9 @@ package vmess
 import (
 	"context"
 	"crypto/aes"
-	"crypto/md5"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
@@ -14,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hades/hades/pkg/core/adapter"
-	"github.com/hades/hades/pkg/perf/pool"
-	"github.com/hades/hades/pkg/transport"
+	"github.com/Qing060325/Hades/pkg/core/adapter"
+	"github.com/Qing060325/Hades/pkg/perf/pool"
+	"github.com/Qing060325/Hades/pkg/transport"
 )
 
 const (
@@ -215,6 +216,12 @@ func (a *Adapter) handshake(conn net.Conn, metadata *adapter.Metadata) error {
 }
 
 // aeadHandshake AEAD 加密握手
+// TODO: 完善 VMess AEAD 握手实现
+// 完整流程应包括:
+// 1. 基于 UUID 和时间戳生成认证密钥 (kdf)
+// 2. 使用 AES-128-CBC 加密请求头并附带 HMAC-SHA256 认证
+// 3. 解析服务端响应头 (18 bytes: auth + cmd + opt + port + addr_type)
+// 4. 使用 AEAD (AES-128-GCM 或 ChaCha20-Poly1305) 保护后续数据传输
 func (a *Adapter) aeadHandshake(conn net.Conn, hdr *header) error {
 	// 生成随机 key 和 iv
 	key := make([]byte, 16) // AES-128
@@ -233,8 +240,7 @@ func (a *Adapter) aeadHandshake(conn net.Conn, hdr *header) error {
 	headerData = append(headerData, Version)
 	headerData = append(headerData, hdr.UUID[:]...)
 
-	// 构建完整的请求数据
-	// 这里简化实现，实际 VMess AEAD 握手更复杂
+	// TODO: 使用完整的 VMess AEAD 加密流程代替明文写入
 	_, err = conn.Write(headerData)
 	return err
 }
@@ -247,7 +253,7 @@ func (a *Adapter) tlsWrap(conn net.Conn) net.Conn {
 	}
 	tlsConn := tls.Client(conn, &tls.Config{
 		ServerName: serverName,
-		MinVersion: tls.VersionTLS12,
+		MinVersion: tls.VersionTLS13,
 	})
 	return tlsConn
 }
@@ -306,10 +312,9 @@ func hexToByte(s string) (byte, error) {
 	return b, nil
 }
 
-// KDF 密钥派生
+// KDF 密钥派生 (HMAC-SHA256)
 func kdf(key []byte, path ...[]byte) []byte {
-	h := md5.New()
-	h.Write(key)
+	h := hmac.New(sha256.New, key)
 	for _, p := range path {
 		h.Write(p)
 	}

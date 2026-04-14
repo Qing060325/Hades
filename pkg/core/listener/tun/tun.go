@@ -9,10 +9,10 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/hades/hades/internal/config"
-	"github.com/hades/hades/pkg/core/adapter"
-	"github.com/hades/hades/pkg/core/group"
-	"github.com/hades/hades/pkg/core/rules"
+	"github.com/Qing060325/Hades/internal/config"
+	"github.com/Qing060325/Hades/pkg/core/adapter"
+	"github.com/Qing060325/Hades/pkg/core/group"
+	"github.com/Qing060325/Hades/pkg/core/rules"
 	"github.com/rs/zerolog/log"
 )
 

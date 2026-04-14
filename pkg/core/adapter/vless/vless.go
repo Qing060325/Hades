@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hades/hades/pkg/core/adapter"
-	"github.com/hades/hades/pkg/perf/pool"
-	"github.com/hades/hades/pkg/transport"
+	"github.com/Qing060325/Hades/pkg/core/adapter"
+	"github.com/Qing060325/Hades/pkg/perf/pool"
+	"github.com/Qing060325/Hades/pkg/transport"
 )
 
 const (
@@ -240,7 +240,7 @@ func (a *Adapter) tlsWrap(conn net.Conn) net.Conn {
 	}
 	tlsConn := tls.Client(conn, &tls.Config{
 		ServerName: serverName,
-		MinVersion: tls.VersionTLS12,
+		MinVersion: tls.VersionTLS13,
 	})
 	return tlsConn
 }

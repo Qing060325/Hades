@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/hades/hades/pkg/core/adapter"
-	"github.com/hades/hades/pkg/core/group"
-	"github.com/hades/hades/pkg/core/rules"
-	"github.com/hades/hades/pkg/stats"
+	"github.com/Qing060325/Hades/pkg/core/adapter"
+	"github.com/Qing060325/Hades/pkg/core/group"
+	"github.com/Qing060325/Hades/pkg/core/rules"
+	"github.com/Qing060325/Hades/pkg/stats"
 	"github.com/rs/zerolog/log"
 )
 

@@ -6,7 +6,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/hades/hades/internal/config"
+	"github.com/Qing060325/Hades/internal/config"
 )
 
 // Manager 拨号器管理器

@@ -11,8 +11,8 @@ import (
 	"net"
 	"time"
 
-	"github.com/hades/hades/pkg/core/adapter"
-	"github.com/hades/hades/pkg/perf/pool"
+	"github.com/Qing060325/Hades/pkg/core/adapter"
+	"github.com/Qing060325/Hades/pkg/perf/pool"
 )
 
 const (
@@ -222,7 +222,7 @@ func (a *Adapter) tlsWrap(conn net.Conn) net.Conn {
 	}
 	tlsConfig := &tls.Config{
 		ServerName: serverName,
-		MinVersion: tls.VersionTLS12,
+		MinVersion: tls.VersionTLS13,
 	}
 	if a.skipCertVerify {
 		tlsConfig.InsecureSkipVerify = true

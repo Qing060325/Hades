@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hades/hades/internal/config"
-	"github.com/hades/hades/pkg/core/adapter"
+	"github.com/Qing060325/Hades/internal/config"
+	"github.com/Qing060325/Hades/pkg/core/adapter"
 )
 
 // Sniffer 嗅探器

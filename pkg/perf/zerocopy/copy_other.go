@@ -6,7 +6,7 @@ package zerocopy
 import (
 	"io"
 
-	"github.com/hades/hades/pkg/perf/pool"
+	"github.com/Qing060325/Hades/pkg/perf/pool"
 )
 
 // SpliceCopier 在非Linux平台使用缓冲拷贝

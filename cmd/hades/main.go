@@ -8,9 +8,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/hades/hades/internal/app"
-	"github.com/hades/hades/internal/config"
-	"github.com/hades/hades/internal/version"
+	"github.com/Qing060325/Hades/internal/app"
+	"github.com/Qing060325/Hades/internal/config"
+	"github.com/Qing060325/Hades/internal/version"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
