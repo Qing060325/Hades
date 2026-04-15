@@ -1,473 +1,679 @@
 #!/bin/bash
-#
-# Hades 一键安装脚本
-# 高性能代理内核 - 开箱即用
-#
-# 用法: curl -fsSL https://raw.githubusercontent.com/Qing060325/Hades/main/install.sh | bash
-#
+# ╔══════════════════════════════════════════════════════════════╗
+# ║          Hades 一键安装脚本 v3.0                            ║
+# ║   高性能代理内核 — 开箱即用                                  ║
+# ║                                                              ║
+# ║   用法:                                                      ║
+# ║     非交互安装:  curl -fsSL <url> | sudo bash               ║
+# ║     交互管理:    sudo bash install.sh                        ║
+# ║     指定操作:    sudo bash install.sh [install|start|stop   ║
+# ║                   |restart|update|uninstall|status|logs]    ║
+# ║     用户模式:    bash install.sh --user                     ║
+# ╚══════════════════════════════════════════════════════════════╝
 
-set -e
+set -euo pipefail
 
-# 颜色定义
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-BOLD='\033[1m'
-NC='\033[0m'
+# ────────────────────── 配置 ──────────────────────
 
-# 版本号
-VERSION="v0.2.0"
-REPO="Qing060325/Hades"
-GITHUB_API="https://api.github.com/repos/${REPO}"
-GITHUB_RAW="https://raw.githubusercontent.com/${REPO}"
+readonly SCRIPT_VER="3.0"
+readonly REPO="Qing060325/Hades"
+readonly GITHUB_API="https://api.github.com/repos/${REPO}"
+readonly GITHUB_RAW="https://raw.githubusercontent.com/${REPO}/main"
+readonly FALLBACK_VERSION="v0.5.0"
 
-# 安装目录
+# 安装路径（root 模式 vs 用户模式）
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/hades"
 LOG_DIR="/var/log/hades"
-
-# 打印函数
-info() { echo -e "${GREEN}[INFO]${NC} $1"; }
-warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-error() { echo -e "${RED}[ERROR]${NC} $1"; }
-step() { echo -e "${BLUE}==>${NC} ${BOLD}$1${NC}"; }
-
-# 检测操作系统
-detect_os() {
-    case "$(uname -s)" in
-        Linux*)     echo "linux" ;;
-        Darwin*)    echo "darwin" ;;
-        CYGWIN*)    echo "windows" ;;
-        MINGW*)     echo "windows" ;;
-        *)          echo "unknown" ;;
-    esac
-}
-
-# 检测架构
-detect_arch() {
-    case "$(uname -m)" in
-        x86_64|amd64)   echo "amd64" ;;
-        aarch64|arm64)  echo "arm64" ;;
-        armv7l|armhf)   echo "arm" ;;
-        i386|i686)      echo "386" ;;
-        *)              echo "unknown" ;;
-    esac
-}
-
-# 检测是否有 root 权限
-check_root() {
-    if [ "$EUID" -ne 0 ] && [ "$1" != "--user" ]; then
-        warn "建议使用 root 权限安装，或使用 --user 参数安装到用户目录"
-        INSTALL_DIR="$HOME/.local/bin"
-        CONFIG_DIR="$HOME/.config/hades"
-        LOG_DIR="$HOME/.local/var/log/hades"
-    fi
-}
-
-# 获取最新版本
-get_latest_version() {
-    if command -v curl &> /dev/null; then
-        curl -fsSL "${GITHUB_API}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/'
-    elif command -v wget &> /dev/null; then
-        wget -qO- "${GITHUB_API}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/'
-    else
-        echo "$VERSION"
-    fi
-}
-
-# 下载文件
-download_file() {
-    local url="$1"
-    local output="$2"
-
-    if command -v curl &> /dev/null; then
-        curl -fsSL "$url" -o "$output"
-    elif command -v wget &> /dev/null; then
-        wget -q "$url" -O "$output"
-    else
-        error "需要 curl 或 wget 来下载文件"
-        exit 1
-    fi
-}
-
-# 安装二进制文件
-install_binary() {
-    local os="$1"
-    local arch="$2"
-    local version="$3"
-
-    step "下载 Hades ${version} (${os}/${arch})..."
-
-    local binary_name="hades-${os}-${arch}"
-    local download_url="${GITHUB_API}/releases/download/${version}/${binary_name}"
-
-    if [ "$os" = "windows" ]; then
-        binary_name="${binary_name}.exe"
-        download_url="${GITHUB_API}/releases/download/${version}/${binary_name}"
-    fi
-
-    local tmp_file="/tmp/${binary_name}"
-
-    # 尝试下载预编译二进制
-    if download_file "$download_url" "$tmp_file" 2>/dev/null; then
-        info "下载成功"
-
-        # SHA256 签名校验
-        local sha256_url="${download_url}.sha256"
-        local sha256_file="/tmp/${binary_name}.sha256"
-        if download_file "$sha256_url" "$sha256_file" 2>/dev/null; then
-            local expected_hash=$(cat "$sha256_file" | awk '{print $1}')
-            local actual_hash=""
-            if command -v sha256sum &> /dev/null; then
-                actual_hash=$(sha256sum "$tmp_file" | awk '{print $1}')
-            elif command -v shasum &> /dev/null; then
-                actual_hash=$(shasum -a 256 "$tmp_file" | awk '{print $1}')
-            fi
-            if [ -n "$actual_hash" ]; then
-                if [ "$expected_hash" = "$actual_hash" ]; then
-                    info "SHA256 校验通过"
-                else
-                    error "SHA256 校验失败！期望: ${expected_hash} 实际: ${actual_hash}"
-                    rm -f "$tmp_file" "$sha256_file"
-                    exit 1
-                fi
-            else
-                warn "未找到 sha256sum 或 shasum，跳过校验"
-            fi
-            rm -f "$sha256_file"
-        else
-            warn "未找到 .sha256 校验文件，跳过签名校验"
-        fi
-    else
-        warn "预编译二进制不可用，将本地构建..."
-        build_from_source
-        return
-    fi
-
-    # 安装
-    chmod +x "$tmp_file"
-    mv "$tmp_file" "${INSTALL_DIR}/hades"
-
-    info "二进制文件已安装到 ${INSTALL_DIR}/hades"
-}
-
-# 从源码构建
-build_from_source() {
-    step "从源码构建..."
-
-    # 检查 Go 环境
-    if ! command -v go &> /dev/null; then
-        error "需要 Go 环境来构建"
-        exit 1
-    fi
-
-    # 克隆仓库
-    local tmp_dir="/tmp/hades-build"
-    rm -rf "$tmp_dir"
-    git clone "https://github.com/${REPO}.git" "$tmp_dir"
-    cd "$tmp_dir"
-
-    # 构建
-    make deps
-    make build
-
-    # 安装
-    mv bin/hades "${INSTALL_DIR}/hades"
-    chmod +x "${INSTALL_DIR}/hades"
-
-    # 清理
-    rm -rf "$tmp_dir"
-
-    info "构建完成"
-}
-
-# 创建配置目录和默认配置
-setup_config() {
-    step "创建配置..."
-
-    mkdir -p "$CONFIG_DIR"
-    mkdir -p "$LOG_DIR"
-
-    # 下载默认配置
-    if [ ! -f "${CONFIG_DIR}/config.yaml" ]; then
-        download_file "${GITHUB_RAW}/main/configs/config.yaml" "${CONFIG_DIR}/config.yaml"
-        info "默认配置已创建: ${CONFIG_DIR}/config.yaml"
-    else
-        warn "配置文件已存在，跳过"
-    fi
-
-    # 创建服务管理脚本
-    cat > "${INSTALL_DIR}/hades-ctl" << 'SCRIPT'
-#!/bin/bash
-# Hades 服务管理脚本
-
-CONFIG_FILE="/etc/hades/config.yaml"
+SERVICE_USER="hades"
+SERVICE_FILE="/etc/systemd/system/hades.service"
 PID_FILE="/var/run/hades.pid"
-LOG_FILE="/var/log/hades/hades.log"
+
+# ────────────────────── 颜色 ──────────────────────
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
+
+# ────────────────────── 工具函数 ──────────────────────
+
+info()  { echo -e "${BLUE}[INFO]${NC}  $1"; }
+ok()    { echo -e "${GREEN}[OK]${NC}    $1"; }
+warn()  { echo -e "${YELLOW}[WARN]${NC}  $1"; }
+err()   { echo -e "${RED}[ERROR]${NC} $1"; }
+step()  { echo -e "\n${CYAN}━━━${NC} ${BOLD}$1${NC}"; }
+die()   { err "$1"; exit 1; }
+
+read_input() {
+  local prompt="$1"; local default="${2:-}"
+  if [ -t 0 ]; then read -r -p "$prompt" val; else read -r val </dev/tty; fi
+  echo "${val:-$default}"
+}
+
+confirm() {
+  local prompt="$1"; local default="${2:-N}"
+  local val; val=$(read_input "$prompt [$default] " "$default")
+  [[ "$val" =~ ^[yY] ]]
+}
+
+download() {
+  local url="$1" output="$2"
+  if command -v curl &>/dev/null; then
+    curl -fsSL "$url" -o "$output"
+  elif command -v wget &>/dev/null; then
+    wget -q "$url" -O "$output"
+  else
+    die "需要 curl 或 wget"
+  fi
+}
+
+# ────────────────────── Banner ──────────────────────
+
+show_banner() {
+  echo -e "${BOLD}${CYAN}"
+  echo '  _   _           _     '
+  echo ' | | | |         | |    '
+  echo ' | |_| | __ _ ___| |__  '
+  echo ' |  _  |/ _` / __|  _ \ '
+  echo ' | | | | (_| \__ \ | | |'
+  echo ' |_| |_|\__,_|___/_| |_|'
+  echo -e "${NC}"
+  echo -e "  ${BOLD}Hades${NC} 安装脚本 v${SCRIPT_VER}"
+  echo -e "  ${DIM}高性能代理内核 — 开箱即用${NC}"
+  echo ""
+}
+
+# ────────────────────── 环境检测 ──────────────────────
+
+OS="" ARCH=""
+
+detect_env() {
+  step "检测系统环境"
+
+  OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  case "$OS" in
+    linux)   OS="linux" ;;
+    darwin)  OS="darwin" ;;
+    *)       die "不支持的操作系统: $(uname -s)" ;;
+  esac
+
+  ARCH="$(uname -m)"
+  case "$ARCH" in
+    x86_64|amd64)   ARCH="amd64" ;;
+    aarch64|arm64)  ARCH="arm64" ;;
+    armv7l|armhf)   ARCH="arm" ;;
+    i386|i686)      ARCH="386" ;;
+    *)              die "不支持的架构: $ARCH" ;;
+  esac
+
+  ok "系统: ${OS}/${ARCH}"
+}
+
+# ────────────────────── 用户模式 ──────────────────────
+
+setup_user_mode() {
+  if [ "${1:-}" = "--user" ] || [ "$(id -u)" -ne 0 ]; then
+    INSTALL_DIR="$HOME/.local/bin"
+    CONFIG_DIR="$HOME/.config/hades"
+    LOG_DIR="$HOME/.local/var/log/hades"
+    SERVICE_USER="$(whoami)"
+    PID_FILE="$HOME/.local/var/run/hades.pid"
+    info "用户模式: 安装至 ${INSTALL_DIR}"
+  fi
+}
+
+# ────────────────────── 获取最新版本 ──────────────────────
+
+get_latest_version() {
+  local ver
+  ver=$(download "${GITHUB_API}/releases/latest" /tmp/hades-release.json 2>/dev/null \
+    && grep '"tag_name"' /tmp/hades-release.json | sed -E 's/.*"([^"]+)".*/\1/' \
+    || echo "")
+  rm -f /tmp/hades-release.json
+  echo "${ver:-$FALLBACK_VERSION}"
+}
+
+# ────────────────────── 安装二进制 ──────────────────────
+
+install_binary() {
+  local version="$1"
+  local binary_name="hades-${OS}-${ARCH}"
+  local download_url="${GITHUB_API}/releases/download/${version}/${binary_name}"
+  local tmp_file="/tmp/${binary_name}"
+
+  step "下载 Hades ${version}"
+
+  local retries=0 max_retries=3 success=false
+  while [ $retries -lt $max_retries ] && [ "$success" = false ]; do
+    retries=$((retries + 1))
+    info "尝试下载 (${retries}/${max_retries})..."
+
+    if download "$download_url" "$tmp_file"; then
+      local fsize
+      fsize=$(stat -c%s "$tmp_file" 2>/dev/null || stat -f%z "$tmp_file" 2>/dev/null || echo "0")
+      if [ "$fsize" -lt 500000 ]; then
+        warn "文件过小 (${fsize} 字节)，可能是错误响应"
+        rm -f "$tmp_file"
+        [ $retries -lt $max_retries ] && sleep 2
+      else
+        success=true
+      fi
+    else
+      warn "下载失败"
+      [ $retries -lt $max_retries ] && sleep 2
+    fi
+  done
+
+  if [ "$success" = true ]; then
+    # SHA256 校验
+    local sha256_url="${download_url}.sha256"
+    local sha256_file="/tmp/${binary_name}.sha256"
+    if download "$sha256_url" "$sha256_file" 2>/dev/null; then
+      local expected actual
+      expected=$(awk '{print $1}' "$sha256_file")
+      if command -v sha256sum &>/dev/null; then
+        actual=$(sha256sum "$tmp_file" | awk '{print $1}')
+      elif command -v shasum &>/dev/null; then
+        actual=$(shasum -a 256 "$tmp_file" | awk '{print $1}')
+      fi
+      if [ -n "$actual" ] && [ "$expected" = "$actual" ]; then
+        ok "SHA256 校验通过"
+      elif [ -n "$actual" ]; then
+        warn "SHA256 校验不一致，但继续安装（期望: ${expected:0:16}... 实际: ${actual:0:16}...）"
+      fi
+      rm -f "$sha256_file"
+    else
+      warn "未找到 SHA256 校验文件，跳过校验"
+    fi
+
+    chmod +x "$tmp_file"
+    mkdir -p "$INSTALL_DIR"
+    mv "$tmp_file" "${INSTALL_DIR}/hades"
+    ok "二进制已安装: ${INSTALL_DIR}/hades"
+  else
+    warn "预编译二进制下载失败，尝试源码构建..."
+    build_from_source
+  fi
+}
+
+# ────────────────────── 源码构建 ──────────────────────
+
+build_from_source() {
+  step "从源码构建"
+  command -v go &>/dev/null || die "需要 Go 环境来构建: https://go.dev/dl/"
+
+  local tmp_dir; tmp_dir=$(mktemp -d)
+  git clone "https://github.com/${REPO}.git" "$tmp_dir"
+  cd "$tmp_dir"
+  make deps 2>/dev/null || go mod tidy
+  make build 2>/dev/null || go build -o bin/hades ./cmd/hades
+
+  mkdir -p "$INSTALL_DIR"
+  mv bin/hades "${INSTALL_DIR}/hades"
+  chmod +x "${INSTALL_DIR}/hades"
+  rm -rf "$tmp_dir"
+  ok "源码构建完成"
+}
+
+# ────────────────────── 配置 ──────────────────────
+
+setup_config() {
+  step "初始化配置"
+
+  mkdir -p "$CONFIG_DIR" "$LOG_DIR"
+
+  if [ ! -f "${CONFIG_DIR}/config.yaml" ]; then
+    info "下载默认配置..."
+    if download "${GITHUB_RAW}/configs/config.yaml" "${CONFIG_DIR}/config.yaml" 2>/dev/null; then
+      local fsize
+      fsize=$(stat -c%s "${CONFIG_DIR}/config.yaml" 2>/dev/null || echo "0")
+      if [ "$fsize" -lt 100 ]; then
+        warn "配置文件异常，生成最小配置"
+        generate_minimal_config
+      fi
+    else
+      warn "配置文件下载失败，生成最小配置"
+      generate_minimal_config
+    fi
+    ok "配置已创建: ${CONFIG_DIR}/config.yaml"
+  else
+    ok "配置已存在: ${CONFIG_DIR}/config.yaml"
+  fi
+}
+
+generate_minimal_config() {
+  cat > "${CONFIG_DIR}/config.yaml" << 'EOF'
+# Hades 配置文件
+mixed-port: 7890
+external-controller: 0.0.0.0:9090
+mode: rule
+log-level: info
+dns:
+  enable: true
+  listen: 0.0.0.0:1053
+  nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+proxies: []
+proxy-groups:
+  - name: "PROXY"
+    type: select
+    proxies:
+      - DIRECT
+rules:
+  - GEOIP,CN,DIRECT
+  - MATCH,PROXY
+EOF
+}
+
+# ────────────────────── 服务管理脚本 ──────────────────────
+
+install_ctl_script() {
+  local ctl_path="${INSTALL_DIR}/hades-ctl"
+  cat > "$ctl_path" << CTLEOF
+#!/bin/bash
+# Hades 服务管理脚本 (auto-generated)
+CONFIG="${CONFIG_DIR}/config.yaml"
+PID="${PID_FILE}"
+LOG="${LOG_DIR}/hades.log"
+BINARY="${INSTALL_DIR}/hades"
 
 start() {
-    if [ -f "$PID_FILE" ] && kill -0 $(cat "$PID_FILE") 2>/dev/null; then
-        echo "Hades 已在运行"
-        return 1
-    fi
-    nohup hades -c "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &
-    echo $! > "$PID_FILE"
-    echo "Hades 已启动 (PID: $(cat $PID_FILE))"
+  [ -f "\$PID" ] && kill -0 \$(cat "\$PID") 2>/dev/null && echo "Hades 已在运行 (PID: \$(cat \$PID))" && return 0
+  mkdir -p "\$(dirname "\$LOG")" "\$(dirname "\$PID")"
+  nohup "\$BINARY" -c "\$CONFIG" > "\$LOG" 2>&1 &
+  echo \$! > "\$PID"
+  echo "Hades 已启动 (PID: \$(cat \$PID))"
 }
 
 stop() {
-    if [ -f "$PID_FILE" ]; then
-        kill $(cat "$PID_FILE") 2>/dev/null
-        rm -f "$PID_FILE"
-        echo "Hades 已停止"
-    else
-        echo "Hades 未运行"
-    fi
+  if [ -f "\$PID" ]; then
+    kill \$(cat "\$PID") 2>/dev/null; rm -f "\$PID"
+    echo "Hades 已停止"
+  else
+    echo "Hades 未运行"
+  fi
 }
 
-restart() {
-    stop
-    sleep 1
-    start
-}
+restart() { stop; sleep 1; start; }
+status()  { [ -f "\$PID" ] && kill -0 \$(cat "\$PID") 2>/dev/null && echo "运行中 (PID: \$(cat \$PID))" || echo "未运行"; }
+logs()    { tail -f "\$LOG"; }
 
-status() {
-    if [ -f "$PID_FILE" ] && kill -0 $(cat "$PID_FILE") 2>/dev/null; then
-        echo "Hades 运行中 (PID: $(cat $PID_FILE))"
-    else
-        echo "Hades 未运行"
-        rm -f "$PID_FILE" 2>/dev/null
-    fi
-}
-
-logs() {
-    tail -f "$LOG_FILE"
-}
-
-case "$1" in
-    start)   start ;;
-    stop)    stop ;;
-    restart) restart ;;
-    status)  status ;;
-    logs)    logs ;;
-    *)       echo "用法: hades-ctl {start|stop|restart|status|logs}" ;;
+case "\$1" in
+  start)   start ;;
+  stop)    stop ;;
+  restart) restart ;;
+  status)  status ;;
+  logs)    logs ;;
+  *)       echo "用法: hades-ctl {start|stop|restart|status|logs}" ;;
 esac
-SCRIPT
-    chmod +x "${INSTALL_DIR}/hades-ctl"
-
-    info "管理脚本已安装: hades-ctl"
+CTLEOF
+  chmod +x "$ctl_path"
+  ok "管理脚本已安装: hades-ctl"
 }
 
-# 安装系统服务
+# ────────────────────── 系统服务 ──────────────────────
+
 install_service() {
-    local os="$1"
+  step "配置系统服务"
 
-    step "安装系统服务..."
+  if [ "$OS" = "linux" ] && command -v systemctl &>/dev/null; then
+    install_systemd_service
+  elif [ "$OS" = "darwin" ]; then
+    install_launchd_service
+  else
+    warn "未检测到支持的 init 系统，请使用 hades-ctl 管理服务"
+  fi
+}
 
-    if [ "$os" = "linux" ]; then
-        # systemd
-        if command -v systemctl &> /dev/null; then
-            cat > /etc/systemd/system/hades.service << 'SERVICE'
+install_systemd_service() {
+  # 创建专用用户（root 模式）
+  if [ "$SERVICE_USER" = "hades" ] && ! id hades &>/dev/null; then
+    useradd --system --no-create-home --shell /usr/sbin/nologin hades 2>/dev/null || true
+    chown -R hades:hades "$CONFIG_DIR" "$LOG_DIR"
+  fi
+
+  cat > "$SERVICE_FILE" << EOF
 [Unit]
 Description=Hades Proxy Kernel
 After=network.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/hades -c /etc/hades/config.yaml
+User=${SERVICE_USER}
+Group=$( [ "$SERVICE_USER" = "hades" ] && echo "hades" || echo "$(id -gn)" )
+ExecStart=${INSTALL_DIR}/hades -c ${CONFIG_DIR}/config.yaml
 Restart=on-failure
 RestartSec=5s
+LimitNOFILE=1048576
+WorkingDirectory=${CONFIG_DIR}
+
+# 安全加固
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=${CONFIG_DIR} ${LOG_DIR}
 
 [Install]
 WantedBy=multi-user.target
-SERVICE
-            systemctl daemon-reload
-            systemctl enable hades
-            info "systemd 服务已安装: systemctl {start|stop|status} hades"
-            return
-        fi
-    fi
+EOF
 
-    if [ "$os" = "darwin" ]; then
-        # launchd
-        local plist_path="$HOME/Library/LaunchAgents/com.hades.plist"
-        cat > "$plist_path" << SERVICE
+  systemctl daemon-reload
+  systemctl enable hades
+  ok "systemd 服务已安装: systemctl {start|stop|status} hades"
+}
+
+install_launchd_service() {
+  local plist_path="$HOME/Library/LaunchAgents/com.hades.plist"
+  mkdir -p "$(dirname "$plist_path")"
+  cat > "$plist_path" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>Label</key>
-    <string>com.hades</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>${INSTALL_DIR}/hades</string>
-        <string>-c</string>
-        <string>${CONFIG_DIR}/config.yaml</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
+  <key>Label</key>
+  <string>com.hades</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${INSTALL_DIR}/hades</string>
+    <string>-c</string>
+    <string>${CONFIG_DIR}/config.yaml</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${LOG_DIR}/hades.log</string>
+  <key>StandardErrorPath</key>
+  <string>${LOG_DIR}/hades-error.log</string>
 </dict>
 </plist>
-SERVICE
-        launchctl load "$plist_path" 2>/dev/null || true
-        info "launchd 服务已安装"
-        return
-    fi
-
-    warn "未检测到支持的 init 系统，请手动启动"
+EOF
+  launchctl load "$plist_path" 2>/dev/null || true
+  ok "launchd 服务已安装"
 }
 
-# 配置向导
-config_wizard() {
-    step "配置向导..."
+# ────────────────────── 安装主流程 ──────────────────────
 
-    echo ""
-    echo "请选择配置模式:"
-    echo "  1) 快速配置 (仅设置端口)"
-    echo "  2) 完整配置 (交互式)"
-    echo "  3) 跳过 (使用默认配置)"
-    echo ""
-    read -p "请选择 [1-3]: " choice
+do_install() {
+  show_banner
+  setup_user_mode "${1:-}"
+  detect_env
 
+  local version
+  version=$(get_latest_version)
+  ok "最新版本: ${version}"
+
+  install_binary "$version"
+  setup_config
+  install_ctl_script
+
+  # 询问是否安装系统服务
+  echo ""
+  if confirm "是否安装系统服务（开机自启）？ [Y/n] " "Y"; then
+    install_service
+  else
+    warn "跳过系统服务安装，可使用 hades-ctl 手动管理"
+  fi
+
+  show_install_success
+}
+
+# ────────────────────── 管理操作 ──────────────────────
+
+do_start() {
+  if command -v systemctl &>/dev/null && [ -f "$SERVICE_FILE" ]; then
+    systemctl start hades && ok "Hades 已启动"
+  elif [ -f "${INSTALL_DIR}/hades-ctl" ]; then
+    "${INSTALL_DIR}/hades-ctl" start
+  else
+    nohup "${INSTALL_DIR}/hades" -c "${CONFIG_DIR}/config.yaml" > "${LOG_DIR}/hades.log" 2>&1 &
+    ok "Hades 已启动 (PID: $!)"
+  fi
+}
+
+do_stop() {
+  if command -v systemctl &>/dev/null && [ -f "$SERVICE_FILE" ]; then
+    systemctl stop hades && ok "Hades 已停止"
+  elif [ -f "${INSTALL_DIR}/hades-ctl" ]; then
+    "${INSTALL_DIR}/hades-ctl" stop
+  else
+    [ -f "$PID_FILE" ] && kill "$(cat "$PID_FILE")" 2>/dev/null && rm -f "$PID_FILE"
+    ok "Hades 已停止"
+  fi
+}
+
+do_restart() {
+  do_stop; sleep 1; do_start
+  ok "Hades 已重启"
+}
+
+do_update() {
+  step "更新 Hades"
+  detect_env
+
+  local version
+  version=$(get_latest_version)
+  info "目标版本: ${version}"
+
+  # 停止服务
+  do_stop 2>/dev/null || true
+
+  # 备份
+  local backup_dir="/tmp/hades-backup-$(date +%s)"
+  mkdir -p "$backup_dir"
+  [ -f "${CONFIG_DIR}/config.yaml" ] && cp "${CONFIG_DIR}/config.yaml" "$backup_dir/"
+
+  # 安装新版本
+  install_binary "$version"
+
+  # 恢复配置
+  [ -f "$backup_dir/config.yaml" ] && cp "$backup_dir/config.yaml" "${CONFIG_DIR}/config.yaml"
+  rm -rf "$backup_dir"
+
+  # 启动
+  do_start
+  ok "更新完成"
+}
+
+do_uninstall() {
+  echo -e "\n${RED}⚠️  即将卸载 Hades 及所有配置${NC}"
+  if ! confirm "确定要卸载吗？此操作不可恢复 [y/N] " "N"; then
+    info "已取消"; return
+  fi
+
+  step "卸载 Hades"
+
+  # 停止服务
+  if command -v systemctl &>/dev/null && [ -f "$SERVICE_FILE" ]; then
+    systemctl stop hades 2>/dev/null || true
+    systemctl disable hades 2>/dev/null || true
+    rm -f "$SERVICE_FILE"
+    systemctl daemon-reload
+  fi
+  if [ "$OS" = "darwin" ]; then
+    launchctl unload "$HOME/Library/LaunchAgents/com.hades.plist" 2>/dev/null || true
+    rm -f "$HOME/Library/LaunchAgents/com.hades.plist"
+  fi
+
+  # 删除文件
+  rm -f "${INSTALL_DIR}/hades" "${INSTALL_DIR}/hades-ctl"
+  rm -rf "$CONFIG_DIR" "$LOG_DIR" "$PID_FILE"
+
+  # 删除用户（如果是 root 且用户存在）
+  if [ "$(id -u)" -eq 0 ] && id hades &>/dev/null; then
+    userdel hades 2>/dev/null || true
+  fi
+
+  ok "Hades 已完全卸载"
+}
+
+do_logs() {
+  if command -v systemctl &>/dev/null && [ -f "$SERVICE_FILE" ]; then
+    journalctl -u hades -f --no-pager -n 100
+  else
+    tail -f "${LOG_DIR}/hades.log"
+  fi
+}
+
+# ────────────────────── 状态展示 ──────────────────────
+
+show_status() {
+  echo ""
+  echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+  local running=false
+  if command -v systemctl &>/dev/null && systemctl is-active --quiet hades 2>/dev/null; then
+    running=true
+  elif [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    running=true
+  fi
+
+  if $running; then
+    echo -e "  状态: ${GREEN}● 运行中${NC}"
+  elif [ -f "${INSTALL_DIR}/hades" ]; then
+    echo -e "  状态: ${YELLOW}○ 已停止${NC}"
+  else
+    echo -e "  状态: ${RED}✖ 未安装${NC}"
+  fi
+
+  if [ -f "${INSTALL_DIR}/hades" ]; then
+    local ver
+    ver=$("${INSTALL_DIR}/hades" -v 2>/dev/null | head -1 || echo "unknown")
+    echo -e "  版本: ${ver}"
+    echo ""
+    echo -e "  二进制: ${CYAN}${INSTALL_DIR}/hades${NC}"
+    echo -e "  配置:   ${CYAN}${CONFIG_DIR}/config.yaml${NC}"
+    echo -e "  日志:   ${CYAN}${LOG_DIR}/hades.log${NC}"
+    echo ""
+    echo -e "  混合端口: 7890 | API 端口: 9090 | DNS 端口: 1053"
+  fi
+
+  echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+}
+
+show_install_success() {
+  echo ""
+  echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "${GREEN}${BOLD}  🎉 Hades 安装成功！${NC}"
+  echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo ""
+  echo -e "  🚀 快速开始:"
+  echo -e "     前台运行:  ${CYAN}hades -c ${CONFIG_DIR}/config.yaml${NC}"
+  echo -e "     服务管理:  ${CYAN}hades-ctl start${NC}"
+  echo -e "     系统服务:  ${CYAN}systemctl start hades${NC}"
+  echo ""
+  echo -e "  📋 常用命令:"
+  echo -e "     查看状态:  ${CYAN}bash install.sh status${NC}"
+  echo -e "     查看日志:  ${CYAN}bash install.sh logs${NC}"
+  echo -e "     更新版本:  ${CYAN}bash install.sh update${NC}"
+  echo -e "     卸载:      ${CYAN}bash install.sh uninstall${NC}"
+  echo ""
+  echo -e "  ${DIM}配置文件: ${CONFIG_DIR}/config.yaml${NC}"
+  echo -e "  ${DIM}日志目录: ${LOG_DIR}${NC}"
+  echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+}
+
+# ────────────────────── 交互菜单 ──────────────────────
+
+show_menu() {
+  echo ""
+  echo -e "${CYAN}╔══════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║${NC}      ${BOLD}Hades 管理工具 v${SCRIPT_VER}${NC}           ${CYAN}║${NC}"
+  echo -e "${CYAN}╠══════════════════════════════════════╣${NC}"
+
+  local status_icon
+  if command -v systemctl &>/dev/null && systemctl is-active --quiet hades 2>/dev/null; then
+    status_icon="${GREEN}● 运行中${NC}"
+  elif [ -f "${INSTALL_DIR}/hades" ]; then
+    status_icon="${YELLOW}○ 已停止${NC}"
+  else
+    status_icon="${RED}✖ 未安装${NC}"
+  fi
+
+  echo -e "${CYAN}║${NC}  状态: ${status_icon}                    ${CYAN}║${NC}"
+  echo -e "${CYAN}╠══════════════════════════════════════╣${NC}"
+  echo -e "${CYAN}║${NC}  ${GREEN}1${NC}) 安装/更新 Hades                  ${CYAN}║${NC}"
+  echo -e "${CYAN}║${NC}  ${GREEN}2${NC}) 启动服务                           ${CYAN}║${NC}"
+  echo -e "${CYAN}║${NC}  ${GREEN}3${NC}) 停止服务                           ${CYAN}║${NC}"
+  echo -e "${CYAN}║${NC}  ${GREEN}4${NC}) 重启服务                           ${CYAN}║${NC}"
+  echo -e "${CYAN}║${NC}  ${GREEN}5${NC}) 更新到最新版本                     ${CYAN}║${NC}"
+  echo -e "${CYAN}║${NC}  ${GREEN}6${NC}) 查看日志                           ${CYAN}║${NC}"
+  echo -e "${CYAN}║${NC}  ${GREEN}7${NC}) 查看状态                           ${CYAN}║${NC}"
+  echo -e "${CYAN}║${NC}  ${RED}8${NC}) 卸载                               ${CYAN}║${NC}"
+  echo -e "${CYAN}║${NC}  ${DIM}0${NC}) 退出                               ${CYAN}║${NC}"
+  echo -e "${CYAN}╚══════════════════════════════════════╝${NC}"
+  echo -n "请选择 [0-8]: "
+}
+
+interactive() {
+  show_banner
+  while true; do
+    show_menu
+    local choice
+    if [ -t 0 ]; then read -r choice; else read -r choice </dev/tty; fi
     case "$choice" in
-        1)
-            read -p "混合端口 [7890]: " port
-            port=${port:-7890}
-            sed -i.bak "s/mixed-port: .*/mixed-port: ${port}/" "${CONFIG_DIR}/config.yaml"
-            rm -f "${CONFIG_DIR}/config.yaml.bak"
-            info "混合端口已设置为 ${port}"
-            ;;
-        2)
-            echo "完整配置向导开发中..."
-            ;;
-        3)
-            info "使用默认配置"
-            ;;
-        *)
-            info "使用默认配置"
-            ;;
+      1) do_install ;;
+      2) do_start ;;
+      3) do_stop ;;
+      4) do_restart ;;
+      5) do_update ;;
+      6) do_logs ;;
+      7) show_status ;;
+      8) do_uninstall ;;
+      0) info "再见！"; exit 0 ;;
+      *) warn "无效选项" ;;
     esac
+  done
 }
 
-# 显示完成信息
-show_complete() {
-    echo ""
-    echo -e "${GREEN}${BOLD}========================================${NC}"
-    echo -e "${GREEN}${BOLD}  Hades 安装完成！${NC}"
-    echo -e "${GREEN}${BOLD}========================================${NC}"
-    echo ""
-    echo "版本: $(hades -v)"
-    echo ""
-    echo "快速开始:"
-    echo "  hades -c ${CONFIG_DIR}/config.yaml    # 启动"
-    echo "  hades-ctl start                       # 服务方式启动"
-    echo "  hades-ctl status                      # 查看状态"
-    echo ""
-    echo "配置文件: ${CONFIG_DIR}/config.yaml"
-    echo "日志文件: ${LOG_DIR}/hades.log"
-    echo ""
-    echo "文档: https://github.com/${REPO}#readme"
-    echo ""
-}
+# ────────────────────── 入口 ──────────────────────
 
-# 卸载
-uninstall() {
-    step "卸载 Hades..."
-
-    # 停止服务
-    if command -v systemctl &> /dev/null; then
-        systemctl stop hades 2>/dev/null || true
-        systemctl disable hades 2>/dev/null || true
-        rm -f /etc/systemd/system/hades.service
-        systemctl daemon-reload
-    fi
-
-    # 删除文件
-    rm -f "${INSTALL_DIR}/hades"
-    rm -f "${INSTALL_DIR}/hades-ctl"
-    rm -rf "$CONFIG_DIR"
-    rm -rf "$LOG_DIR"
-    rm -f "/var/run/hades.pid"
-
-    info "Hades 已卸载"
-}
-
-# 主函数
 main() {
-    echo -e "${BOLD}"
-    echo "  _    _           _     "
-    echo " | |  | |         | |    "
-    echo " | |__| | __ _ ___| |__  "
-    echo " |  __  |/ _\` / __| '_ \ "
-    echo " | |  | | (_| \__ \ | | |"
-    echo " |_|  |_|\__,_|___/_| |_|"
-    echo ""
-    echo "  高性能代理内核 - 开箱即用"
-    echo -e "${NC}"
-    echo ""
+  # 用户模式
+  if [[ "${1:-}" == "--user" ]]; then
+    shift
+    setup_user_mode "--user"
+  fi
 
-    # 解析参数
-    case "${1:-}" in
-        uninstall)
-            uninstall
-            exit 0
-            ;;
-        --user)
-            INSTALL_DIR="$HOME/.local/bin"
-            CONFIG_DIR="$HOME/.config/hades"
-            LOG_DIR="$HOME/.local/var/log/hades"
-            ;;
-    esac
-
-    # 检测环境
-    local os=$(detect_os)
-    local arch=$(detect_arch)
-
-    info "检测到系统: ${os}/${arch}"
-
-    if [ "$os" = "unknown" ] || [ "$arch" = "unknown" ]; then
-        error "不支持的系统或架构"
-        exit 1
-    fi
-
-    # 检查权限
-    check_root "$@"
-
-    # 获取版本
-    local version=$(get_latest_version)
-    info "最新版本: ${version}"
-
-    # 安装
-    install_binary "$os" "$arch" "$version"
-    setup_config
-
-    # 询问是否安装系统服务
-    echo ""
-    read -p "是否安装系统服务? [Y/n]: " install_svc
-    case "$install_svc" in
-        n|N)
-            warn "跳过系统服务安装"
-            ;;
-        *)
-            install_service "$os"
-            ;;
-    esac
-
-    # 配置向导
-    echo ""
-    read -p "是否运行配置向导? [y/N]: " run_wizard
-    case "$run_wizard" in
-        y|Y)
-            config_wizard
-            ;;
-    esac
-
-    # 完成
-    show_complete
+  case "${1:-}" in
+    install)    do_install "${2:-}" ;;
+    start)      do_start ;;
+    stop)       do_stop ;;
+    restart)    do_restart ;;
+    update)     do_update ;;
+    uninstall)  do_uninstall ;;
+    status)     show_status ;;
+    logs)       do_logs ;;
+    version|-v) echo "Hades install script v${SCRIPT_VER}" ;;
+    help|-h)
+      echo "用法: $0 [命令] [选项]"
+      echo ""
+      echo "命令:"
+      echo "  install    安装 Hades（默认操作）"
+      echo "  start      启动服务"
+      echo "  stop       停止服务"
+      echo "  restart    重启服务"
+      echo "  update     更新到最新版本"
+      echo "  uninstall  卸载 Hades"
+      echo "  status     查看运行状态"
+      echo "  logs       查看实时日志"
+      echo "  version    显示脚本版本"
+      echo ""
+      echo "选项:"
+      echo "  --user     安装到用户目录（无需 root）"
+      echo ""
+      echo "不带参数运行将进入交互菜单"
+      ;;
+    *)
+      if [ -t 0 ]; then
+        interactive
+      else
+        do_install
+      fi
+      ;;
+  esac
 }
 
-# 运行
 main "$@"

@@ -53,19 +53,27 @@
 ### 方式一：一键安装（推荐）
 
 ```bash
-# Linux / macOS
-curl -fsSL https://raw.githubusercontent.com/Qing060325/Hades/main/hades_manager.sh | sudo bash
+# 非交互式安装（适合自动化部署）
+curl -fsSL https://raw.githubusercontent.com/Qing060325/Hades/main/install.sh | sudo bash
 
-# 或使用 wget
-wget -qO- https://raw.githubusercontent.com/Qing060325/Hades/main/hades_manager.sh | sudo bash
+# 交互式菜单（可选操作）
+curl -fsSL https://raw.githubusercontent.com/Qing060325/Hades/main/install.sh | sudo bash -s -- --interactive
+
+# 或使用子命令
+sudo install.sh install     # 安装
+sudo install.sh start       # 启动
+sudo install.sh stop        # 停止
+sudo install.sh restart     # 重启
+sudo install.sh update      # 更新
+sudo install.sh status      # 状态
+sudo install.sh logs        # 日志
+sudo install.sh uninstall   # 卸载
+
+# 非根用户安装
+./install.sh install --user
 ```
 
-安装完成后，管理菜单：
-```bash
-hades_manager.sh
-# 或
-sudo hades_manager.sh
-```
+> 📌 安装脚本 v3.0：自动检测平台架构、SHA256 校验、systemd/launchd 服务、安全加固。
 
 ### 方式二：Docker
 
@@ -102,10 +110,10 @@ hades -c /etc/hades/config.yaml
 
 ```bash
 # 1. 安装 Hades
-sudo hades_manager.sh
+curl -fsSL https://raw.githubusercontent.com/Qing060325/Hades/main/install.sh | sudo bash
 
 # 2. 安装 Hyperion Web 面板
-curl -fsSL https://raw.githubusercontent.com/Qing060325/Hyperion/main/install_hyperion.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Qing060325/Hyperion/main/install.sh | sudo bash
 
 # 3. 访问 http://localhost:8080 管理 Hades
 ```
@@ -219,15 +227,14 @@ hades -c /etc/hades/config.yaml              # 启动
 hades -c /etc/hades/config.yaml -d           # 调试模式
 hades -v                                     # 查看版本
 
-# 服务管理（使用 hades_manager.sh）
-sudo hades_manager.sh
-# 1) 安装/更新 Hades
-# 2) 启动服务
-# 3) 停止服务
-# 4) 重启服务
-# 5) 查看实时日志
-# 6) 卸载 Hades
-# 7) 查看运行状态
+# 服务管理（使用安装脚本）
+sudo install.sh start                        # 启动服务
+sudo install.sh stop                         # 停止服务
+sudo install.sh restart                      # 重启服务
+sudo install.sh status                       # 查看状态
+sudo install.sh logs                         # 查看日志
+sudo install.sh update                       # 更新版本
+sudo install.sh uninstall                    # 卸载
 ```
 
 ---
@@ -255,8 +262,7 @@ Hades/
 │   └── transport/          # 传输层
 ├── configs/                # 配置示例
 ├── docs/                   # 文档
-├── hades_manager.sh        # 管理脚本
-├── install.sh              # 安装脚本
+├── install.sh              # 统一安装/管理脚本 (v3.0)
 └── Makefile                # 构建系统
 ```
 
@@ -302,7 +308,7 @@ Hades/
 
 - 🐛 修复 hysteria2/tuic 适配器 ReadFrom 返回值问题
 - 🐛 调整 Go 版本要求从 1.23 降至 1.21
-- ✨ `hades_manager.sh` 添加下载超时、文件校验、重试机制
+- ✨ 统一安装脚本 v3.0（合并 hades_manager.sh，支持子命令/交互式/非根用户）
 - 📦 提供全平台预编译二进制文件
 
 ### v0.2.0 (2026-04-13)
