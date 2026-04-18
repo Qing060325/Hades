@@ -351,3 +351,42 @@ Hades/
 Made with ❤️ by [Qing060325](https://github.com/Qing060325)
 
 </div>
+
+---
+
+## 🔧 故障排除
+
+### 无法连接代理
+
+**问题**: 客户端无法连接 Hades
+
+**检查步骤**:
+1. 确保 Hades 正常运行: `sudo hades-ctl status` 或 `ps aux | grep hades`
+2. 检查配置文件: `cat /etc/hades/config.yaml`
+3. 检查端口是否被占用: `sudo netstat -tlnp | grep 7890`
+4. 查看日志: `sudo tail -f /var/log/hades/hades.log`
+
+### 不支持的协议
+
+**问题**: 不支持的协议类型
+
+**解决方案**: 查看 [PROTOCOLS.md](docs/PROTOCOLS.md) 了解支持的协议列表。常见协议包括 HTTP, SOCKS5, Shadowsocks, VMess, VLESS, Trojan, Hysteria2, TUIC, WireGuard。
+
+### 从源码构建
+
+如果预编译二进制文件下载失败，可以从源码构建：
+
+```bash
+# 需要 Go 1.25.0+
+git clone https://github.com/Qing060325/Hades.git
+cd Hades
+go build -o hades ./cmd/hades
+sudo mv hades /usr/local/bin/
+```
+
+### 性能优化建议
+
+- **增加文件描述符限制**: `ulimit -n 65536`
+- **调整网络缓冲**: 编辑 `/etc/sysctl.conf` 增加 `net.core.rmem_max` 和 `net.core.wmem_max`
+- **使用 UDP 加速**: 在配置中启用 UDP 支持以获得更好的性能
+
