@@ -1,6 +1,8 @@
 # Binaries
 bin/
 *.exe
+hades
+hades-sub2config
 
 # IDE
 .idea/
