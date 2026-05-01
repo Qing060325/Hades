@@ -168,7 +168,7 @@ type ProcessNameRule struct {
 
 // Match 匹配
 func (r *ProcessNameRule) Match(metadata *adapter.Metadata) bool {
-	return metadata.Process == r.process
+	return metadata.ProcessName == r.process
 }
 
 // Type 返回类型

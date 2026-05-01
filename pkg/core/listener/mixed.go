@@ -137,8 +137,8 @@ func (l *MixedListener) handleHTTP(conn net.Conn, reader *bufio.Reader) {
 	// 提取元数据
 	metadata := &adapter.Metadata{
 		Type:    adapter.MetadataTypeHTTP,
-		Network: "tcp",
-		Inbound: l.addr,
+		NetWork: "tcp",
+		InName: l.addr,
 	}
 
 	if req.Method == http.MethodConnect {
@@ -301,10 +301,10 @@ func (l *MixedListener) handleSOCKS5(conn net.Conn, reader *bufio.Reader) {
 	// 构建元数据
 	metadata := &adapter.Metadata{
 		Type:    adapter.MetadataTypeSOCKS,
-		Network: "tcp",
+		NetWork: "tcp",
 		Host:    host,
 		DstPort: port,
-		Inbound: l.addr,
+		InName: l.addr,
 	}
 
 	log.Debug().Str("target", fmt.Sprintf("%s:%d", host, port)).Msg("[Mixed] SOCKS5请求")

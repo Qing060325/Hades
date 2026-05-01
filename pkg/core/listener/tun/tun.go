@@ -253,7 +253,7 @@ func parsePacket(data []byte) (*adapter.Metadata, []byte, error) {
 	}
 
 	metadata := &adapter.Metadata{
-		Network: "tcp",
+		NetWork: "tcp",
 		Type:    adapter.MetadataTypeTUN,
 	}
 
@@ -264,7 +264,7 @@ func parsePacket(data []byte) (*adapter.Metadata, []byte, error) {
 		metadata.DstIP, _ = netip.ParseAddr(net.IP(data[16:20]).String())
 		metadata.SrcPort = uint16(data[20])<<8 | uint16(data[21])
 		metadata.DstPort = uint16(data[22])<<8 | uint16(data[23])
-		metadata.Network = parseIPProtocol(data[9])
+		metadata.NetWork = parseIPProtocol(data[9])
 		return metadata, data[20:], nil
 	} else if data[0]>>4 == 6 {
 		// IPv6
@@ -272,7 +272,7 @@ func parsePacket(data []byte) (*adapter.Metadata, []byte, error) {
 		metadata.DstIP, _ = netip.ParseAddr(net.IP(data[24:40]).String())
 		metadata.SrcPort = uint16(data[40])<<8 | uint16(data[41])
 		metadata.DstPort = uint16(data[42])<<8 | uint16(data[43])
-		metadata.Network = parseIPProtocol(data[6])
+		metadata.NetWork = parseIPProtocol(data[6])
 		return metadata, data[40:], nil
 	}
 

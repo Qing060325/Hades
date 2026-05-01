@@ -101,7 +101,7 @@ func TestAdapterDial(t *testing.T, adapt adapter.Adapter, targetAddr string) {
 	defer cancel()
 
 	metadata := &adapter.Metadata{
-		Network: "tcp",
+		NetWork: "tcp",
 		Host:    strings.Split(targetAddr, ":")[0],
 		DstPort: uint16(mustParsePort(targetAddr)),
 		Type:    adapter.MetadataTypeSOCKS,
@@ -156,7 +156,7 @@ func TestAdapterURLTest(t *testing.T, adapt adapter.Adapter) {
 func BenchmarkAdapterDial(b *testing.B, adapt adapter.Adapter, targetAddr string) {
 	ctx := context.Background()
 	metadata := &adapter.Metadata{
-		Network: "tcp",
+		NetWork: "tcp",
 		Host:    "127.0.0.1",
 		DstPort: uint16(mustParsePort(targetAddr)),
 		Type:    adapter.MetadataTypeSOCKS,

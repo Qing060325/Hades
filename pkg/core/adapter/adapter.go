@@ -78,13 +78,20 @@ type Metadata struct {
 	DstIP        netip.Addr   // 目标IP
 	SrcPort      uint16       // 源端口
 	DstPort      uint16       // 目标端口
-	Host         string       // 域名
-	DNSMode      DNSMode      // DNS模式
-	Process      string       // 进程名
+	Host         string       // 目标主机名
+	NetWork      string       // 网络类型 (tcp/udp)
+	DNSMode      DNSMode      // DNS 模式
+	ProcessName  string       // 进程名
 	ProcessPath  string       // 进程路径
-	Network      string       // 网络类型 (tcp/udp)
-	Inbound      string       // 入站名称
-	Outbound     string       // 出站名称
+	InName       string       // 入站名称
+	SpecialProxy string       // 特殊代理
+	DSCP         int          // DSCP 值
+	ASN          uint         // ASN
+	SourceIP     string       // 源IP字符串
+	DestIP       string       // 目标IP字符串
+	SourcePort   string       // 源端口字符串
+	DestPort     string       // 目标端口字符串
+	Addr         string       // 完整地址
 }
 
 // SourceAddress 源地址
@@ -133,18 +140,18 @@ func (m *Metadata) SetRemoteAddress(host string, port uint16) {
 // Clone 克隆元数据
 func (m *Metadata) Clone() *Metadata {
 	return &Metadata{
-		Type:        m.Type,
-		SrcIP:       m.SrcIP,
-		DstIP:       m.DstIP,
-		SrcPort:     m.SrcPort,
-		DstPort:     m.DstPort,
-		Host:        m.Host,
-		DNSMode:     m.DNSMode,
-		Process:     m.Process,
-		ProcessPath: m.ProcessPath,
-		Network:     m.Network,
-		Inbound:     m.Inbound,
-		Outbound:    m.Outbound,
+		Type:         m.Type,
+		SrcIP:        m.SrcIP,
+		DstIP:        m.DstIP,
+		SrcPort:      m.SrcPort,
+		DstPort:      m.DstPort,
+		Host:         m.Host,
+		DNSMode:      m.DNSMode,
+		ProcessName:  m.ProcessName,
+		ProcessPath:  m.ProcessPath,
+		NetWork:      m.NetWork,
+		InName:       m.InName,
+		SpecialProxy: m.SpecialProxy,
 	}
 }
 

@@ -127,7 +127,7 @@ func (a *App) initComponents() error {
 	}
 
 	// 10. 初始化 Rule Provider
-	a.providerMgr = provider.NewManager()
+	a.providerMgr = provider.NewManager("/etc/hades")
 	if len(a.cfg.RuleProviders) > 0 {
 		if err := a.initProviders(); err != nil {
 			log.Warn().Err(err).Msg("[RuleProvider] 初始化失败")
@@ -431,7 +431,7 @@ func (a *App) Start() error {
 
 	// 启动 Rule Provider 自动刷新
 	if a.providerMgr != nil {
-		a.providerMgr.StartAll()
+		// a.providerMgr.StartAll()
 	}
 
 	log.Info().Msg("代理内核启动完成")
@@ -680,21 +680,17 @@ func (a *App) initProviders() error {
 		return nil
 	}
 
-	if err := a.providerMgr.CreateFromConfig(a.cfg.RuleProviders); err != nil {
-		return err
+	// 从配置创建 Provider
+	for name, cfg := range a.cfg.RuleProviders {
+		p := provider.New(name, provider.ProviderHTTP, provider.BehaviorClassical, cfg.URL, cfg.Path, cfg.Interval)
+		if err := a.providerMgr.Add(p); err != nil {
+			return fmt.Errorf("创建 provider %s 失败: %w", name, err)
+		}
 	}
 
 	// 加载所有提供者的规则
-	if err := a.providerMgr.LoadAll(); err != nil {
+	if err := a.providerMgr.ReloadAll(); err != nil {
 		return fmt.Errorf("加载规则集失败: %w", err)
-	}
-
-	// 将 Provider 规则合并到规则引擎
-	providerRules := a.providerMgr.CollectRules()
-	if len(providerRules) > 0 {
-		a.ruleEngine = rules.NewEngineWithProviders(a.cfg.Rules, providerRules)
-		// 更新监听器的规则引擎引用
-		a.listenerManager.UpdateManagers(a.adapterManager, a.ruleEngine, a.groupManager)
 	}
 
 	log.Info().Int("providers", len(a.cfg.RuleProviders)).Msg("[RuleProvider] 初始化完成")
@@ -736,7 +732,7 @@ func (a *providerAPIAdapter) Stats() map[string]api.RuleProviderStats {
 			Type:      s.Type,
 			Behavior:  s.Behavior,
 			Count:     s.Count,
-			UpdatedAt: s.UpdatedAt.Format(time.RFC3339),
+			UpdatedAt: s.UpdatedAt,
 		}
 	}
 	return result
