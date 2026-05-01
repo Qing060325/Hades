@@ -202,6 +202,9 @@ func (a *Adapter) handshake(conn net.Conn, metadata *adapter.Metadata) (*vmessCo
 	if _, err := rand.Read(requestBodyIV); err != nil {
 		return nil, err
 	}
+	var requestBodyKeyArr, requestBodyIVArr [16]byte
+	copy(requestBodyKeyArr[:], requestBodyKey)
+	copy(requestBodyIVArr[:], requestBodyIV)
 
 	// 构建请求头明文
 	// 格式: Version(1) + UUID(16) + Options(1) + Security(1) + Reserved(1) + Command(1)
@@ -258,8 +261,8 @@ func (a *Adapter) handshake(conn net.Conn, metadata *adapter.Metadata) (*vmessCo
 	}
 
 	// 派生响应解密密钥
-	responseKey := vmessResponseKey(requestBodyKey)
-	responseNonceDerived := vmessResponseNonce(requestBodyIV)
+	responseKey := vmessResponseKey(requestBodyKeyArr)
+	responseNonceDerived := vmessResponseNonce(requestBodyIVArr)
 
 	responseAEAD, err := CreateAEAD(responseKey)
 	if err != nil {
@@ -287,8 +290,8 @@ func (a *Adapter) handshake(conn net.Conn, metadata *adapter.Metadata) (*vmessCo
 
 	// 设置 AEAD 加密数据传输
 	// 派生数据传输密钥 (与响应头使用相同派生路径)
-	dataKey := vmessDataKey(requestBodyKey)
-	dataIV := vmessDataIV(requestBodyIV)
+	dataKey := vmessDataKey(requestBodyKeyArr)
+	dataIV := vmessDataIV(requestBodyIVArr)
 
 	vc := &vmessConn{
 		Conn:       conn,
