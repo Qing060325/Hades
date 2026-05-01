@@ -28,10 +28,10 @@ func NewSniffer(cfg *config.SnifferConfig) *Sniffer {
 	}
 }
 
-// PeekConnection 嗅探连接
-func (s *Sniffer) PeekConnection(conn net.Conn) (*adapter.Metadata, error) {
+// PeekConnection 嗅探连接，返回元数据和已读取的数据
+func (s *Sniffer) PeekConnection(conn net.Conn) (*adapter.Metadata, []byte, error) {
 	if !s.enable {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// 读取前几个字节来判断协议
@@ -40,7 +40,7 @@ func (s *Sniffer) PeekConnection(conn net.Conn) (*adapter.Metadata, error) {
 
 	n, err := conn.Read(buf)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	conn.SetReadDeadline(time.Time{})
 
@@ -57,13 +57,7 @@ func (s *Sniffer) PeekConnection(conn net.Conn) (*adapter.Metadata, error) {
 		metadata = s.peekQUIC(data)
 	}
 
-	// 将读取的数据放回连接
-	if n > 0 && metadata != nil {
-		return metadata, nil
-	}
-
-	// 创建新连接，将已读数据作为缓冲
-	return nil, nil
+	return metadata, data, nil
 }
 
 // isTLS 检测 TLS 协议

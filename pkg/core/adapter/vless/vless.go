@@ -303,7 +303,7 @@ func hexToByte(s string) (byte, error) {
 	return b, nil
 }
 
-// packAddress 打包地址
+// packAddress 打包地址（安全拷贝，不引用 pool buffer）
 func packAddress(host string, port uint16) []byte {
 	buf := pool.GetSmall()
 	defer pool.Put(buf)
@@ -335,7 +335,10 @@ func packAddress(host string, port uint16) []byte {
 	binary.BigEndian.PutUint16(buf[offset:], port)
 	offset += 2
 
-	return buf[:offset]
+	// 安全拷贝到新切片，避免 pool buffer 被回收后数据失效
+	result := make([]byte, offset)
+	copy(result, buf[:offset])
+	return result
 }
 
 // unpackAddress 解包地址

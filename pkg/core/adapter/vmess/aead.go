@@ -199,3 +199,19 @@ func vmessDataIV(key [16]byte) []byte {
 	k.Write([]byte("VMess Header AEAD Nonce_Length\x00"))
 	return k.Sum(nil)
 }
+
+// vmessResponseKey 派生响应认证密钥
+func vmessResponseKey(key [16]byte) []byte {
+	k := md5.New()
+	k.Write(key[:])
+	k.Write([]byte("VMess Header AEAD Key_Length\x00"))
+	return k.Sum(nil)
+}
+
+// vmessResponseNonce 派生响应认证 nonce
+func vmessResponseNonce(key [16]byte) []byte {
+	k := md5.New()
+	k.Write(key[:])
+	k.Write([]byte("VMess Header AEAD Nonce_Length\x00"))
+	return k.Sum(nil)
+}

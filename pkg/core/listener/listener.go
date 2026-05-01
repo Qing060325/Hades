@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/Qing060325/Hades/pkg/core/adapter"
 	"github.com/Qing060325/Hades/pkg/core/group"
@@ -142,6 +143,12 @@ type BaseListener struct {
 	listener net.Listener
 	closed   bool
 	mu       sync.Mutex
+
+	// 优雅关闭支持
+	connWg        sync.WaitGroup // 跟踪活跃连接
+	shutdownCh    chan struct{}   // 关闭信号
+	shutdownOnce  sync.Once
+	shutdownTimeout time.Duration // 关闭超时
 }
 
 // Addr 返回监听地址
@@ -162,10 +169,59 @@ func (l *BaseListener) Close() error {
 	}
 
 	l.closed = true
+
+	// 发送关闭信号
+	l.shutdownOnce.Do(func() {
+		close(l.shutdownCh)
+	})
+
+	// 关闭 listener 停止接受新连接
 	if l.listener != nil {
-		return l.listener.Close()
+		l.listener.Close()
 	}
+
+	// 等待活跃连接完成
+	timeout := l.shutdownTimeout
+	if timeout == 0 {
+		timeout = 5 * time.Second
+	}
+
+	done := make(chan struct{})
+	go func() {
+		l.connWg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		log.Debug().Msg("所有活跃连接已关闭")
+	case <-time.After(timeout):
+		log.Warn().Dur("timeout", timeout).Msg("等待活跃连接超时，强制关闭")
+	}
+
 	return nil
+}
+
+// ConnStart 标记一个连接开始处理
+func (l *BaseListener) ConnStart() {
+	l.connWg.Add(1)
+}
+
+// ConnDone 标记一个连接处理完成
+func (l *BaseListener) ConnDone() {
+	l.connWg.Done()
+}
+
+// IsClosed 检查监听器是否已关闭
+func (l *BaseListener) IsClosed() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.closed
+}
+
+// Done 返回关闭信号 channel
+func (l *BaseListener) Done() <-chan struct{} {
+	return l.shutdownCh
 }
 
 // SelectAdapter 选择适配器

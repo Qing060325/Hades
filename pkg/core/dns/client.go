@@ -3,6 +3,7 @@ package dns
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"net"
 	"sync"
@@ -90,13 +91,232 @@ func (c *Client) Listen(ctx context.Context, addr string) error {
 
 // handleDNSQuery 处理DNS查询
 func (c *Client) handleDNSQuery(conn *net.UDPConn, remoteAddr *net.UDPAddr, query []byte) {
-	// TODO: 实现完整的DNS查询处理
-	// 1. 解析DNS查询
-	// 2. 检查缓存
-	// 3. 转发查询或返回Fake-IP
-	// 4. 发送响应
+	// 1. 解析 DNS 查询报文
+	if len(query) < 12 {
+		return
+	}
 
-	conn.WriteToUDP(query, remoteAddr)
+	// DNS Header: ID(2) + Flags(2) + QDCOUNT(2) + ANCOUNT(2) + NSCOUNT(2) + ARCOUNT(2)
+	queryID := binary.BigEndian.Uint16(query[0:2])
+	qdCount := binary.BigEndian.Uint16(query[4:6])
+
+	if qdCount == 0 {
+		return
+	}
+
+	// 解析 Question Section
+	offset := 12
+	var qname string
+	var qtype uint16
+	var qclass uint16
+
+	for i := 0; i < int(qdCount); i++ {
+		name, newOffset, err := parseDNSName(query, offset)
+		if err != nil || newOffset+4 > len(query) {
+			return
+		}
+		qname = name
+		qtype = binary.BigEndian.Uint16(query[newOffset : newOffset+2])
+		qclass = binary.BigEndian.Uint16(query[newOffset+2 : newOffset+4])
+		offset = newOffset + 4
+	}
+
+	_ = qclass // 通常为 IN (1)
+
+	// 2. 检查缓存
+	if answers, ok := c.cache.Get(qname); ok && len(answers) > 0 {
+		response := buildDNSResponse(queryID, query, answers, qtype)
+		conn.WriteToUDP(response, remoteAddr)
+		return
+	}
+
+	// 3. Fake-IP 模式
+	if c.fakeIPPool != nil && qtype == 1 { // A 记录
+		fakeIP := c.fakeIPPool.Get(qname)
+		if fakeIP != nil {
+			response := buildDNSResponse(queryID, query, []net.IP{fakeIP}, qtype)
+			conn.WriteToUDP(response, remoteAddr)
+			return
+		}
+	}
+
+	// 4. 转发到上游 DNS
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ips, err := c.Resolve(ctx, qname)
+	if err != nil || len(ips) == 0 {
+		// 返回 SERVFAIL
+		response := buildDNSErrorResponse(queryID, query, 2) // RCODE=2 (SERVFAIL)
+		conn.WriteToUDP(response, remoteAddr)
+		return
+	}
+
+	// 5. 返回解析结果
+	response := buildDNSResponse(queryID, query, ips, qtype)
+	conn.WriteToUDP(response, remoteAddr)
+}
+
+// parseDNSName 解析 DNS 域名（支持指针压缩）
+func parseDNSName(data []byte, offset int) (string, int, error) {
+	if offset >= len(data) {
+		return "", offset, fmt.Errorf("offset 超出范围")
+	}
+
+	var name []byte
+	jumpOffset := offset
+	jumped := false
+
+	for {
+		if offset >= len(data) {
+			return "", offset, fmt.Errorf("域名解析越界")
+		}
+
+		length := data[offset]
+
+		if length == 0 {
+			offset++
+			break
+		}
+
+		// 指针压缩
+		if length&0xC0 == 0xC0 {
+			if offset+1 >= len(data) {
+				return "", offset, fmt.Errorf("指针越界")
+			}
+			pointer := int(binary.BigEndian.Uint16(data[offset:offset+2]) & 0x3FFF)
+			if !jumped {
+				jumpOffset = offset + 2
+			}
+			offset = pointer
+			jumped = true
+			continue
+		}
+
+		offset++
+		if offset+int(length) > len(data) {
+			return "", offset, fmt.Errorf("标签越界")
+		}
+
+		if len(name) > 0 {
+			name = append(name, '.')
+		}
+		name = append(name, data[offset:offset+int(length)]...)
+		offset += int(length)
+	}
+
+	if !jumped {
+		return string(name), offset, nil
+	}
+	return string(name), jumpOffset, nil
+}
+
+// buildDNSResponse 构建 DNS 响应报文
+func buildDNSResponse(queryID uint16, query []byte, ips []net.IP, qtype uint16) []byte {
+	// 响应头
+	response := make([]byte, 0, 512)
+
+	// Header
+	header := make([]byte, 12)
+	binary.BigEndian.PutUint16(header[0:2], queryID)
+	binary.BigEndian.PutUint16(header[2:4], 0x8180) // Standard response, recursion available
+	binary.BigEndian.PutUint16(header[4:6], 1)       // QDCOUNT
+	binary.BigEndian.PutUint16(header[6:8], uint16(len(ips))) // ANCOUNT
+	binary.BigEndian.PutUint16(header[8:10], 0)      // NSCOUNT
+	binary.BigEndian.PutUint16(header[10:12], 0)     // ARCOUNT
+	response = append(response, header...)
+
+	// Question Section (从原始查询中复制)
+	if len(query) > 12 {
+		// 查找 question 结束位置
+		qEnd := 12
+		for qEnd < len(query) {
+			if query[qEnd] == 0 {
+				qEnd += 5 // null + QTYPE(2) + QCLASS(2)
+				break
+			}
+			if query[qEnd]&0xC0 == 0xC0 {
+				qEnd += 2
+				break
+			}
+			qEnd += int(query[qEnd]) + 1
+		}
+		if qEnd <= len(query) {
+			response = append(response, query[12:qEnd]...)
+		}
+	}
+
+	// Answer Section
+	for _, ip := range ips {
+		ip4 := ip.To4()
+		if qtype == 1 && ip4 != nil {
+			// A 记录
+			answer := make([]byte, 2+2+2+4+2+4)
+			// Name (指针指向查询名)
+			binary.BigEndian.PutUint16(answer[0:2], 0xC00C)
+			// Type A
+			binary.BigEndian.PutUint16(answer[2:4], 1)
+			// Class IN
+			binary.BigEndian.PutUint16(answer[4:6], 1)
+			// TTL (300秒)
+			binary.BigEndian.PutUint32(answer[6:10], 300)
+			// RDLENGTH
+			binary.BigEndian.PutUint16(answer[10:12], 4)
+			// RDATA
+			copy(answer[12:16], ip4)
+			response = append(response, answer...)
+		} else if qtype == 28 {
+			// AAAA 记录
+			ip6 := ip.To16()
+			if ip6 != nil {
+				answer := make([]byte, 2+2+2+4+2+16)
+				binary.BigEndian.PutUint16(answer[0:2], 0xC00C)
+				binary.BigEndian.PutUint16(answer[2:4], 28)
+				binary.BigEndian.PutUint16(answer[4:6], 1)
+				binary.BigEndian.PutUint32(answer[6:10], 300)
+				binary.BigEndian.PutUint16(answer[10:12], 16)
+				copy(answer[12:28], ip6)
+				response = append(response, answer...)
+			}
+		}
+	}
+
+	return response
+}
+
+// buildDNSErrorResponse 构建 DNS 错误响应
+func buildDNSErrorResponse(queryID uint16, query []byte, rcode uint16) []byte {
+	response := make([]byte, 0, 512)
+
+	header := make([]byte, 12)
+	binary.BigEndian.PutUint16(header[0:2], queryID)
+	binary.BigEndian.PutUint16(header[2:4], 0x8180|rcode) // Response + RCODE
+	binary.BigEndian.PutUint16(header[4:6], 1)
+	binary.BigEndian.PutUint16(header[6:8], 0)
+	binary.BigEndian.PutUint16(header[8:10], 0)
+	binary.BigEndian.PutUint16(header[10:12], 0)
+	response = append(response, header...)
+
+	// Question Section
+	if len(query) > 12 {
+		qEnd := 12
+		for qEnd < len(query) {
+			if query[qEnd] == 0 {
+				qEnd += 5
+				break
+			}
+			if query[qEnd]&0xC0 == 0xC0 {
+				qEnd += 2
+				break
+			}
+			qEnd += int(query[qEnd]) + 1
+		}
+		if qEnd <= len(query) {
+			response = append(response, query[12:qEnd]...)
+		}
+	}
+
+	return response
 }
 
 // Resolve 解析域名

@@ -79,11 +79,34 @@ func (p *ConnPool) Get(ctx context.Context, key string) (net.Conn, error) {
 			}
 
 			// 检查连接是否有效
-			if err := entry.conn.SetDeadline(time.Now()); err != nil {
+			// 使用 SetReadDeadline + 0 字节读取来探测连接状态
+			if err := entry.conn.SetReadDeadline(time.Now()); err != nil {
 				entry.conn.Close()
 				continue
 			}
-			entry.conn.SetDeadline(time.Time{})
+
+			// 尝试读取来检测连接状态（deadline 已过，立即返回）
+			probeBuf := make([]byte, 1)
+			_, probeErr := entry.conn.Read(probeBuf)
+
+			// 重置 deadline
+			entry.conn.SetReadDeadline(time.Time{})
+
+			if probeErr != nil {
+				// 超时说明连接仍然存活（只是没有数据或 deadline 已过）
+				if netErr, ok := probeErr.(net.Error); ok && netErr.Timeout() {
+					// 连接存活，继续使用
+				} else {
+					// 其他错误（EOF、连接重置等）说明连接已死
+					entry.conn.Close()
+					continue
+				}
+			} else {
+				// 读到了 1 字节数据，连接存活但消耗了 1 字节
+				// 为简单起见关闭此连接（实际数据不应在空闲连接上出现）
+				entry.conn.Close()
+				continue
+			}
 
 			p.idle[key] = entries
 			p.mu.Unlock()

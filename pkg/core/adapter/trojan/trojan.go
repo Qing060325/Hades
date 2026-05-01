@@ -230,7 +230,13 @@ func (a *Adapter) tlsWrap(conn net.Conn) net.Conn {
 	return tls.Client(conn, tlsConfig)
 }
 
-// packAddress 打包地址
+// packAddress 打包地址（安全拷贝，不引用 pool buffer）
+// Trojan 协议格式 (参照 Trojan 协议规范):
+//
+//	ATYP=0x01: IPv4 (4 bytes)
+//	ATYP=0x03: 域名 (1 byte length + domain)
+//	ATYP=0x04: IPv6 (16 bytes)
+//	2 bytes port (big-endian)
 func packAddress(host string, port uint16) []byte {
 	buf := pool.GetSmall()
 	defer pool.Put(buf)
@@ -239,19 +245,26 @@ func packAddress(host string, port uint16) []byte {
 
 	ip := net.ParseIP(host)
 	if ip == nil {
-		// 域名
+		// 域名: ATYP=0x03 + 1字节长度 + 域名
 		domain := []byte(host)
-		binary.BigEndian.PutUint16(buf[offset:], uint16(len(domain)))
-		offset += 2
+		if len(domain) > 255 {
+			domain = domain[:255]
+		}
+		buf[offset] = 0x03
+		offset++
+		buf[offset] = byte(len(domain))
+		offset++
 		copy(buf[offset:], domain)
 		offset += len(domain)
 	} else if ip4 := ip.To4(); ip4 != nil {
+		// IPv4: ATYP=0x01 + 4字节地址
 		buf[offset] = 0x01
 		offset++
 		copy(buf[offset:], ip4)
 		offset += 4
 	} else {
-		buf[offset] = 0x03
+		// IPv6: ATYP=0x04 + 16字节地址
+		buf[offset] = 0x04
 		offset++
 		copy(buf[offset:], ip.To16())
 		offset += 16
@@ -260,7 +273,10 @@ func packAddress(host string, port uint16) []byte {
 	binary.BigEndian.PutUint16(buf[offset:], port)
 	offset += 2
 
-	return buf[:offset]
+	// 安全拷贝到新切片，避免 pool buffer 被回收后数据失效
+	result := make([]byte, offset)
+	copy(result, buf[:offset])
+	return result
 }
 
 // unpackAddress 解包地址
@@ -272,29 +288,34 @@ func unpackAddress(data []byte) (string, uint16, []byte, error) {
 	var host string
 	var offset int
 
-	// 判断地址类型
-	if data[0] == 0x01 {
+	switch data[0] {
+	case 0x01:
 		// IPv4
 		if len(data) < 7 {
 			return "", 0, nil, io.ErrShortBuffer
 		}
 		host = net.IP(data[1:5]).String()
 		offset = 5
-	} else if data[0] == 0x03 {
+	case 0x03:
+		// 域名: 1字节长度 + 域名
+		if len(data) < 2 {
+			return "", 0, nil, io.ErrShortBuffer
+		}
+		domainLen := int(data[1])
+		if len(data) < 2+domainLen+2 {
+			return "", 0, nil, io.ErrShortBuffer
+		}
+		host = string(data[2 : 2+domainLen])
+		offset = 2 + domainLen
+	case 0x04:
 		// IPv6
 		if len(data) < 19 {
 			return "", 0, nil, io.ErrShortBuffer
 		}
 		host = net.IP(data[1:17]).String()
 		offset = 17
-	} else {
-		// 域名 (长度前缀)
-		domainLen := binary.BigEndian.Uint16(data[:2])
-		if len(data) < 2+int(domainLen)+2 {
-			return "", 0, nil, io.ErrShortBuffer
-		}
-		host = string(data[2 : 2+domainLen])
-		offset = 2 + int(domainLen)
+	default:
+		return "", 0, nil, fmt.Errorf("未知地址类型: 0x%02x", data[0])
 	}
 
 	port := binary.BigEndian.Uint16(data[offset:])

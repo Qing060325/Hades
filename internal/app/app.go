@@ -4,7 +4,10 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/Qing060325/Hades/internal/config"
@@ -388,6 +391,9 @@ func (a *App) createGroup(cfg *config.ProxyGroupConfig) group.Group {
 func (a *App) Start() error {
 	log.Info().Msg("正在启动代理内核...")
 
+	// 启动信号监听（优雅关闭）
+	a.setupGracefulShutdown()
+
 	// 启动 DNS 服务
 	if a.cfg.DNS.Enable && a.cfg.DNS.Listen != "" {
 		a.wg.Add(1)
@@ -527,11 +533,12 @@ func (a *App) Stop() error {
 		a.apiServer.Shutdown(a.ctx)
 	}
 
-	a.wg.Wait()
-
+	// 关闭监听器（会等待活跃连接完成）
 	if a.listenerManager != nil {
 		a.listenerManager.Close()
 	}
+
+	a.wg.Wait()
 
 	// 停止 Rule Provider
 	if a.providerMgr != nil {
@@ -545,6 +552,23 @@ func (a *App) Stop() error {
 
 	log.Info().Msg("代理内核已关闭")
 	return nil
+}
+
+// setupGracefulShutdown 设置信号处理，实现优雅关闭
+func (a *App) setupGracefulShutdown() {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	a.wg.Add(1)
+	go func() {
+		defer a.wg.Done()
+		sig := <-sigChan
+		log.Info().Str("signal", sig.String()).Msg("收到关闭信号，正在优雅关闭...")
+
+		if err := a.Stop(); err != nil {
+			log.Error().Err(err).Msg("关闭应用失败")
+		}
+	}()
 }
 
 // Stats 获取统计信息

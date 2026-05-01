@@ -16,6 +16,7 @@ import (
 	"github.com/Qing060325/Hades/pkg/core/group"
 	"github.com/Qing060325/Hades/pkg/core/rules"
 	"github.com/Qing060325/Hades/pkg/perf/pool"
+	"github.com/Qing060325/Hades/pkg/perf/zerocopy"
 	"github.com/rs/zerolog/log"
 )
 
@@ -34,11 +35,13 @@ func NewMixedListener(
 ) *MixedListener {
 	return &MixedListener{
 		BaseListener: BaseListener{
-			addr:       addr,
-			allowLan:   allowLan,
-			adapterMgr: adapterMgr,
-			ruleEngine: ruleEngine,
-			groupMgr:   groupMgr,
+			addr:            addr,
+			allowLan:        allowLan,
+			adapterMgr:      adapterMgr,
+			ruleEngine:      ruleEngine,
+			groupMgr:        groupMgr,
+			shutdownCh:      make(chan struct{}),
+			shutdownTimeout: 5 * time.Second,
 		},
 	}
 }
@@ -84,13 +87,21 @@ func (l *MixedListener) Listen(ctx context.Context) error {
 
 // handleConnection 处理连接
 func (l *MixedListener) handleConnection(conn net.Conn) {
+	// 跟踪活跃连接
+	l.ConnStart()
+	defer l.ConnDone()
 	defer conn.Close()
+
+	// 检查是否正在关闭
+	if l.IsClosed() {
+		return
+	}
 
 	// 设置读超时
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 
-	// 检测协议类型
-	reader := bufio.NewReader(conn)
+	// 使用 bufio.Reader 包装连接，确保 peek 的数据不会丢失
+	reader := bufio.NewReaderSize(conn, 4096)
 	header, err := reader.Peek(1)
 	if err != nil {
 		log.Debug().Err(err).Msg("读取协议头失败")
@@ -119,6 +130,10 @@ func (l *MixedListener) handleHTTP(conn net.Conn, reader *bufio.Reader) {
 		return
 	}
 
+	// 构建 MultiReader：将 bufio 中已缓冲的数据与原始连接合并，
+	// 确保 relay 不会丢失 bufio 缓冲区中的 body 数据
+	bufferedConn := io.MultiReader(reader, conn)
+
 	// 提取元数据
 	metadata := &adapter.Metadata{
 		Type:    adapter.MetadataTypeHTTP,
@@ -131,19 +146,21 @@ func (l *MixedListener) handleHTTP(conn net.Conn, reader *bufio.Reader) {
 		host, port := parseHostPort(req.Host)
 		metadata.Host = host
 		metadata.DstPort = port
-		l.handleConnect(conn, req, metadata)
+		l.handleConnect(bufferedConn, conn, req, metadata)
 	} else {
 		// 普通 HTTP 请求
-		l.handleHTTPRequest(conn, req, metadata)
+		l.handleHTTPRequest(bufferedConn, conn, req, metadata)
 	}
 }
 
 // handleConnect 处理CONNECT请求
-func (l *MixedListener) handleConnect(conn net.Conn, req *http.Request, metadata *adapter.Metadata) {
+// conn: 合并了 bufio 缓冲数据的 reader（用于读取 TLS 数据）
+// rawConn: 原始连接（用于写入响应和作为 net.Conn）
+func (l *MixedListener) handleConnect(conn io.Reader, rawConn net.Conn, req *http.Request, metadata *adapter.Metadata) {
 	// 选择适配器
 	adapt := l.SelectAdapter(metadata)
 	if adapt == nil {
-		conn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
+		rawConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
 		return
 	}
 
@@ -153,20 +170,22 @@ func (l *MixedListener) handleConnect(conn net.Conn, req *http.Request, metadata
 	backendConn, err := adapt.DialContext(context.Background(), metadata)
 	if err != nil {
 		log.Error().Err(err).Str("adapter", adapt.Name()).Msg("建立后端连接失败")
-		conn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
+		rawConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
 		return
 	}
 	defer backendConn.Close()
 
 	// 响应客户端
-	conn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+	rawConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
 
-	// 双向转发
-	l.relay(conn, backendConn)
+	// 双向转发（conn 包含 bufio 缓冲数据）
+	l.relay(conn, rawConn, backendConn)
 }
 
 // handleHTTPRequest 处理普通HTTP请求
-func (l *MixedListener) handleHTTPRequest(conn net.Conn, req *http.Request, metadata *adapter.Metadata) {
+// bufferedConn: 合并了 bufio 缓冲数据的 reader（包含可能的 body 数据）
+// rawConn: 原始连接（用于写入和作为 net.Conn）
+func (l *MixedListener) handleHTTPRequest(bufferedConn io.Reader, rawConn net.Conn, req *http.Request, metadata *adapter.Metadata) {
 	// 提取目标地址
 	host := req.Host
 	if !strings.Contains(host, ":") {
@@ -179,23 +198,27 @@ func (l *MixedListener) handleHTTPRequest(conn net.Conn, req *http.Request, meta
 	// 选择适配器
 	adapt := l.SelectAdapter(metadata)
 	if adapt == nil {
-		conn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
+		rawConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
 		return
 	}
 
 	// 建立后端连接
 	backendConn, err := adapt.DialContext(context.Background(), metadata)
 	if err != nil {
-		conn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
+		rawConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
 		return
 	}
 	defer backendConn.Close()
 
 	// 转发请求
+	// req.Body 由 http.ReadRequest 创建，内部使用 bufio.Reader。
+	// bufio.Reader 可能已缓冲了 body 的一部分数据。
+	// req.Write() 通过 io.Copy 从 req.Body 读取，会先读取缓冲数据，
+	// 再从底层连接读取剩余数据，因此能正确转发完整 body。
 	req.Write(backendConn)
 
-	// 双向转发
-	l.relay(conn, backendConn)
+	// 双向转发（bufferedConn 包含 bufio 缓冲数据）
+	l.relay(bufferedConn, rawConn, backendConn)
 }
 
 // handleSOCKS5 处理SOCKS5请求
@@ -305,12 +328,28 @@ func (l *MixedListener) handleSOCKS5(conn net.Conn, reader *bufio.Reader) {
 	// 响应成功
 	conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 
-	// 双向转发
-	l.relay(conn, backendConn)
+	// 双向转发（SOCKS5 握手后 bufio 可能缓冲了部分 payload 数据）
+	bufferedConn := io.MultiReader(reader, conn)
+	l.relay(bufferedConn, conn, backendConn)
 }
 
 // relay 双向转发
-func (l *MixedListener) relay(left, right net.Conn) {
+// leftReader: 左侧读取源（可能是 bufio + conn 的 MultiReader）
+// leftConn: 左侧完整连接（用于写入和 splice）
+// rightConn: 右侧完整连接
+// 优先使用 splice 零拷贝（Linux），否则回退到 io.CopyBuffer
+func (l *MixedListener) relay(leftReader io.Reader, leftConn net.Conn, rightConn net.Conn) {
+	// 尝试 TCP 零拷贝（仅当 leftReader 就是 leftConn 时可用 splice）
+	if lc, lok := leftConn.(*net.TCPConn); lok {
+		if rc, rok := rightConn.(*net.TCPConn); rok {
+			if leftReader == leftConn {
+				zerocopy.TCPRelay(lc, rc)
+				return
+			}
+		}
+	}
+
+	// 回退到缓冲拷贝
 	var wg sync.WaitGroup
 	wg.Add(2)
 
@@ -318,14 +357,14 @@ func (l *MixedListener) relay(left, right net.Conn) {
 		defer wg.Done()
 		buf := pool.GetLarge()
 		defer pool.Put(buf)
-		io.CopyBuffer(left, right, buf)
+		io.CopyBuffer(leftConn, rightConn, buf)
 	}()
 
 	go func() {
 		defer wg.Done()
 		buf := pool.GetLarge()
 		defer pool.Put(buf)
-		io.CopyBuffer(right, left, buf)
+		io.CopyBuffer(rightConn, leftReader, buf)
 	}()
 
 	wg.Wait()
@@ -376,11 +415,13 @@ func NewHTTPListener(
 	return &HTTPListener{
 		MixedListener: MixedListener{
 			BaseListener: BaseListener{
-				addr:       addr,
-				allowLan:   allowLan,
-				adapterMgr: adapterMgr,
-				ruleEngine: ruleEngine,
-				groupMgr:   groupMgr,
+				addr:            addr,
+				allowLan:        allowLan,
+				adapterMgr:      adapterMgr,
+				ruleEngine:      ruleEngine,
+				groupMgr:        groupMgr,
+				shutdownCh:      make(chan struct{}),
+				shutdownTimeout: 5 * time.Second,
 			},
 		},
 	}
@@ -402,11 +443,13 @@ func NewSOCKSListener(
 	return &SOCKSListener{
 		MixedListener: MixedListener{
 			BaseListener: BaseListener{
-				addr:       addr,
-				allowLan:   allowLan,
-				adapterMgr: adapterMgr,
-				ruleEngine: ruleEngine,
-				groupMgr:   groupMgr,
+				addr:            addr,
+				allowLan:        allowLan,
+				adapterMgr:      adapterMgr,
+				ruleEngine:      ruleEngine,
+				groupMgr:        groupMgr,
+				shutdownCh:      make(chan struct{}),
+				shutdownTimeout: 5 * time.Second,
 			},
 		},
 	}
