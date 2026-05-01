@@ -18,6 +18,7 @@ set -euo pipefail
 readonly SCRIPT_VER="3.0"
 readonly REPO="Qing060325/Hades"
 readonly GITHUB_API="https://api.github.com/repos/${REPO}"
+readonly GITHUB_URL="https://github.com/${REPO}"
 readonly GITHUB_RAW="https://raw.githubusercontent.com/${REPO}/main"
 readonly FALLBACK_VERSION="v0.5.0"
 
@@ -137,7 +138,7 @@ get_latest_version() {
 install_binary() {
   local version="$1"
   local binary_name="hades-${OS}-${ARCH}"
-  local download_url="${GITHUB_API}/releases/download/${version}/${binary_name}"
+  local download_url="${GITHUB_URL}/releases/download/${version}/${binary_name}"
   local tmp_file="/tmp/${binary_name}"
 
   step "下载 Hades ${version}"
