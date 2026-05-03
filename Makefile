@@ -3,7 +3,8 @@
 
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
-LDFLAGS := -ldflags "-s -w -X github.com/Qing060325/Hades/internal/version.Version=$(VERSION) -X github.com/Qing060325/Hades/internal/version.BuildTime=$(BUILD_TIME)"
+GOVERSION := $(shell $(GOCMD) version 2>/dev/null | awk '{print $$3}' || echo "go1.25.0")
+LDFLAGS := -ldflags "-s -w -X github.com/Qing060325/Hades/internal/version.Version=$(VERSION) -X github.com/Qing060325/Hades/internal/version.BuildTime=$(BUILD_TIME) -X github.com/Qing060325/Hades/internal/version.GoVersion=$(GOVERSION)"
 
 # Go 参数
 GOCMD := go
