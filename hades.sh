@@ -1,6 +1,19 @@
 #!/bin/bash
-# Hades 高性能代理内核部署脚本
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  ⚠️  DEPRECATED - 此脚本已废弃，请使用 install.sh 代替     ║
+# ║                                                              ║
+# ║  新用法:                                                     ║
+# ║    bash install.sh install    # 安装                        ║
+# ║    bash install.sh start      # 启动                        ║
+# ║    bash install.sh status     # 状态                        ║
+# ╚══════════════════════════════════════════════════════════════╝
+#
+# Hades 高性能代理内核部署脚本 (旧版)
 # 项目地址: https://github.com/Qing060325/Hades
+
+echo -e "\033[1;33m[WARN]\033[0m hades.sh 已废弃，请使用 install.sh 代替"
+echo -e "  用法: bash install.sh [install|start|stop|restart|status|logs|update]"
+echo ""
 
 set -e
 

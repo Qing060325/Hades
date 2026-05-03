@@ -4,7 +4,7 @@
 set -euo pipefail
 
 HADES_VERSION="v0.5.0"
-GO_VERSION="1.23.4"
+GO_VERSION="1.25.0"
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/hades"
 LOG_DIR="/var/log/hades"
@@ -58,6 +58,22 @@ cmd_install() {
     export PATH=$PATH:/usr/local/go/bin
     export GOPROXY=https://goproxy.cn,direct
     cd /tmp/hades-build
+
+    # 校验 Go 版本
+    local go_ver required_ver
+    go_ver=$(go version | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+    required_ver=$(grep -E '^go ' go.mod | awk '{print $2}')
+    local go_major go_minor req_major req_minor
+    go_major=$(echo "$go_ver" | cut -d. -f1)
+    go_minor=$(echo "$go_ver" | cut -d. -f2)
+    req_major=$(echo "$required_ver" | cut -d. -f1)
+    req_minor=$(echo "$required_ver" | cut -d. -f2)
+    if [ "$go_major" -lt "$req_major" ] 2>/dev/null || \
+       { [ "$go_major" -eq "$req_major" ] 2>/dev/null && [ "$go_minor" -lt "$req_minor" ] 2>/dev/null; }; then
+        err "Go 版本过低: 当前 ${go_ver}，需要 >= ${required_ver}"
+    fi
+    ok "Go 版本校验通过: ${go_ver} (需要 >= ${required_ver})"
+
     go build -o hades ./cmd/hades || err "编译失败"
     ok "编译完成 ($(ls -lh hades | awk '{print $5}'))"
 
@@ -81,13 +97,20 @@ cmd_install() {
 [Unit]
 Description=Hades Proxy Service
 After=network.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 ExecStart=${INSTALL_DIR}/hades -c ${CONFIG_DIR}/config.yaml
 Restart=on-failure
 RestartSec=5
-LimitNOFILE=65536
+LimitNOFILE=1048576
+
+# 安全加固
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=${CONFIG_DIR}:${LOG_DIR}
 
 [Install]
 WantedBy=multi-user.target

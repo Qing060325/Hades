@@ -138,7 +138,7 @@ mixed-port: 7890
 allow-lan: false
 mode: rule
 log-level: info
-external-controller: 0.0.0.0:9090
+external-controller: 127.0.0.1:9090
 
 # DNS 配置
 dns:

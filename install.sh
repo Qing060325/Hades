@@ -202,6 +202,24 @@ build_from_source() {
   step "从源码构建"
   command -v go &>/dev/null || die "需要 Go 环境来构建: https://go.dev/dl/"
 
+  # 检查 Go 版本
+  local go_ver required_ver
+  go_ver=$(go version | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+  # 从 go.mod 读取最低版本要求
+  required_ver=$(grep -E '^go ' go.mod 2>/dev/null | awk '{print $2}' || echo "")
+  if [ -n "$required_ver" ]; then
+    local go_major go_minor req_major req_minor
+    go_major=$(echo "$go_ver" | cut -d. -f1)
+    go_minor=$(echo "$go_ver" | cut -d. -f2)
+    req_major=$(echo "$required_ver" | cut -d. -f1)
+    req_minor=$(echo "$required_ver" | cut -d. -f2)
+    if [ "$go_major" -lt "$req_major" ] 2>/dev/null || \
+       { [ "$go_major" -eq "$req_major" ] 2>/dev/null && [ "$go_minor" -lt "$req_minor" ] 2>/dev/null; }; then
+      die "Go 版本过低: 当前 ${go_ver}，需要 >= ${required_ver}"
+    fi
+  fi
+  ok "Go 版本: ${go_ver}"
+
   local tmp_dir; tmp_dir=$(mktemp -d)
   git clone "https://github.com/${REPO}.git" "$tmp_dir"
   cd "$tmp_dir"
@@ -245,12 +263,13 @@ generate_minimal_config() {
   cat > "${CONFIG_DIR}/config.yaml" << 'EOF'
 # Hades 配置文件
 mixed-port: 7890
-external-controller: 0.0.0.0:9090
+allow-lan: false
+external-controller: 127.0.0.1:9090
 mode: rule
 log-level: info
 dns:
   enable: true
-  listen: 0.0.0.0:1053
+  listen: 127.0.0.1:1053
   nameserver:
     - 223.5.5.5
     - 119.29.29.29
@@ -270,36 +289,83 @@ EOF
 
 install_ctl_script() {
   local ctl_path="${INSTALL_DIR}/hades-ctl"
-  cat > "$ctl_path" << CTLEOF
+  cat > "$ctl_path" << 'CTLEOF'
 #!/bin/bash
 # Hades 服务管理脚本 (auto-generated)
-CONFIG="${CONFIG_DIR}/config.yaml"
-PID="${PID_FILE}"
-LOG="${LOG_DIR}/hades.log"
-BINARY="${INSTALL_DIR}/hades"
+CONFIG="__CONFIG_DIR__/config.yaml"
+PID="__PID_FILE__"
+LOG="__LOG_DIR__/hades.log"
+BINARY="__INSTALL_DIR__/hades"
+
+is_running() {
+  [ -f "$PID" ] && kill -0 "$(cat "$PID")" 2>/dev/null
+}
 
 start() {
-  [ -f "\$PID" ] && kill -0 \$(cat "\$PID") 2>/dev/null && echo "Hades 已在运行 (PID: \$(cat \$PID))" && return 0
-  mkdir -p "\$(dirname "\$LOG")" "\$(dirname "\$PID")"
-  nohup "\$BINARY" -c "\$CONFIG" > "\$LOG" 2>&1 &
-  echo \$! > "\$PID"
-  echo "Hades 已启动 (PID: \$(cat \$PID))"
+  if is_running; then
+    echo "Hades 已在运行 (PID: $(cat "$PID"))"
+    return 0
+  fi
+  rm -f "$PID"
+  mkdir -p "$(dirname "$LOG")" "$(dirname "$PID")"
+  nohup "$BINARY" -c "$CONFIG" > "$LOG" 2>&1 &
+  local pid=$!
+  sleep 0.5
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "$pid" > "$PID"
+    echo "Hades 已启动 (PID: $pid)"
+  else
+    echo "Hades 启动失败，查看日志: $LOG"
+    return 1
+  fi
 }
 
 stop() {
-  if [ -f "\$PID" ]; then
-    kill \$(cat "\$PID") 2>/dev/null; rm -f "\$PID"
-    echo "Hades 已停止"
+  if is_running; then
+    local pid
+    pid=$(cat "$PID")
+    kill "$pid" 2>/dev/null
+    # 等待进程退出，最多 5 秒
+    local i=0
+    while [ $i -lt 50 ] && kill -0 "$pid" 2>/dev/null; do
+      sleep 0.1
+      i=$((i + 1))
+    done
+    # 仍未退出则强制杀死
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -9 "$pid" 2>/dev/null
+      echo "Hades 已强制停止 (PID: $pid)"
+    else
+      echo "Hades 已停止 (PID: $pid)"
+    fi
+    rm -f "$PID"
   else
+    rm -f "$PID"
     echo "Hades 未运行"
   fi
 }
 
 restart() { stop; sleep 1; start; }
-status()  { [ -f "\$PID" ] && kill -0 \$(cat "\$PID") 2>/dev/null && echo "运行中 (PID: \$(cat \$PID))" || echo "未运行"; }
-logs()    { tail -f "\$LOG"; }
 
-case "\$1" in
+status() {
+  if is_running; then
+    local pid
+    pid=$(cat "$PID")
+    echo "运行中 (PID: $pid)"
+    # 显示内存和 CPU
+    if command -v ps &>/dev/null; then
+      ps -p "$pid" -o pid,rss,%cpu,%mem,etime --no-headers 2>/dev/null | \
+        awk '{printf "  内存: %dMB | CPU: %s%% | 运行时间: %s\n", $2/1024, $3, $5}'
+    fi
+  else
+    rm -f "$PID" 2>/dev/null
+    echo "未运行"
+  fi
+}
+
+logs() { tail -f "$LOG"; }
+
+case "$1" in
   start)   start ;;
   stop)    stop ;;
   restart) restart ;;
@@ -308,6 +374,11 @@ case "\$1" in
   *)       echo "用法: hades-ctl {start|stop|restart|status|logs}" ;;
 esac
 CTLEOF
+  # 替换占位符
+  sed -i "s|__CONFIG_DIR__|${CONFIG_DIR}|g" "$ctl_path"
+  sed -i "s|__PID_FILE__|${PID_FILE}|g" "$ctl_path"
+  sed -i "s|__LOG_DIR__|${LOG_DIR}|g" "$ctl_path"
+  sed -i "s|__INSTALL_DIR__|${INSTALL_DIR}|g" "$ctl_path"
   chmod +x "$ctl_path"
   ok "管理脚本已安装: hades-ctl"
 }
@@ -353,7 +424,7 @@ WorkingDirectory=${CONFIG_DIR}
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=${CONFIG_DIR} ${LOG_DIR}
+ReadWritePaths=${CONFIG_DIR}:${LOG_DIR}
 
 [Install]
 WantedBy=multi-user.target
@@ -454,9 +525,24 @@ do_update() {
   step "更新 Hades"
   detect_env
 
+  local current_version=""
+  if [ -f "${INSTALL_DIR}/hades" ]; then
+    current_version=$("${INSTALL_DIR}/hades" -v 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+  fi
+
   local version
   version=$(get_latest_version)
-  info "目标版本: ${version}"
+
+  if [ -n "$current_version" ] && [ "$current_version" = "$version" ]; then
+    ok "当前已是最新版本 ${current_version}，无需更新"
+    return 0
+  fi
+
+  if [ -n "$current_version" ]; then
+    info "当前版本: ${current_version} → 目标版本: ${version}"
+  else
+    info "目标版本: ${version}"
+  fi
 
   # 停止服务
   do_stop 2>/dev/null || true

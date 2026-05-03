@@ -11,32 +11,35 @@
 | 源码地址 | https://github.com/Qing060325/Hades |
 | 部署路径 | `/workspace/Hades` |
 | 可执行文件 | `/workspace/Hades/bin/hades` |
-| 版本 | v0.1beta |
-| 构建时间 | 2026-04-13 |
+| 版本 | v0.5.0 |
+| 构建时间 | 2026-05-04 |
 
 ## 服务端口
 
-| 服务 | 端口 | 说明 |
-|------|------|------|
-| 混合端口 | 7890 | HTTP + SOCKS5 自动协议检测 |
-| API 服务 | 9090 | RESTful API 管理接口 |
-| DNS 服务 | 1053 | DNS 解析服务 |
+| 服务 | 端口 | 绑定地址 | 说明 |
+|------|------|----------|------|
+| 混合端口 | 7890 | 0.0.0.0 | HTTP + SOCKS5 自动协议检测 |
+| API 服务 | 9090 | 127.0.0.1 | RESTful API 管理接口 |
+| DNS 服务 | 1053 | 127.0.0.1 | DNS 解析服务 |
 
 ## 使用方法
 
 ### 快速启动
 
 ```bash
-# 方式1: 直接运行
-/workspace/Hades/bin/hades -c /workspace/Hades/configs/config.yaml
+# 方式1: 使用安装脚本（推荐）
+bash install.sh install    # 安装
+bash install.sh start      # 启动
+bash install.sh stop       # 停止
+bash install.sh restart    # 重启
+bash install.sh status     # 状态
+bash install.sh logs       # 日志
 
-# 方式2: 使用管理脚本
-/workspace/Hades/hades.sh start    # 启动
-/workspace/Hades/hades.sh stop     # 停止
-/workspace/Hades/hades.sh restart  # 重启
-/workspace/Hades/hades.sh status   # 状态
-/workspace/Hades/hades.sh logs     # 日志
+# 方式2: 直接运行
+/workspace/Hades/bin/hades -c /etc/hades/config.yaml
 ```
+
+> ⚠️ `hades.sh` 已废弃，请使用 `install.sh` 代替。
 
 ### 命令行参数
 
@@ -62,8 +65,8 @@ mixed-port: 7890
 # 运行模式: rule / global / direct
 mode: rule
 
-# RESTful API
-external-controller: 0.0.0.0:9090
+# RESTful API（仅本地访问）
+external-controller: 127.0.0.1:9090
 
 # DNS 配置
 dns:
