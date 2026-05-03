@@ -13,8 +13,12 @@ import (
 	"github.com/Qing060325/Hades/internal/config"
 	"github.com/Qing060325/Hades/pkg/api"
 	"github.com/Qing060325/Hades/pkg/core/adapter"
+	"github.com/Qing060325/Hades/pkg/core/adapter/anytls"
 	"github.com/Qing060325/Hades/pkg/core/adapter/hysteria2"
+	"github.com/Qing060325/Hades/pkg/core/adapter/masque"
 	"github.com/Qing060325/Hades/pkg/core/adapter/shadowsocks"
+	"github.com/Qing060325/Hades/pkg/core/adapter/sudoku"
+	"github.com/Qing060325/Hades/pkg/core/adapter/trusttunnel"
 	"github.com/Qing060325/Hades/pkg/core/adapter/trojan"
 	"github.com/Qing060325/Hades/pkg/core/adapter/tuic"
 	"github.com/Qing060325/Hades/pkg/core/adapter/vless"
@@ -197,6 +201,14 @@ func (a *App) createAdapter(cfg *config.ProxyConfig) (adapter.Adapter, error) {
 		return a.createTUIC(cfg)
 	case "wireguard", "wg":
 		return a.createWireGuard(cfg)
+	case "anytls":
+		return a.createAnyTLS(cfg)
+	case "masque":
+		return a.createMASQUE(cfg)
+	case "trust-tunnel":
+		return a.createTrustTunnel(cfg)
+	case "sudoku":
+		return a.createSudoku(cfg)
 	default:
 		return nil, fmt.Errorf("不支持的代理类型: %s", cfg.Type)
 	}
@@ -342,6 +354,89 @@ func (a *App) createWireGuard(cfg *config.ProxyConfig) (adapter.Adapter, error) 
 	}
 
 	return wireguard.NewAdapter(cfg.Name, cfg.Server, cfg.Port, cfg.PrivateKey, cfg.PublicKey, opts...)
+}
+
+func (a *App) createAnyTLS(cfg *config.ProxyConfig) (adapter.Adapter, error) {
+	password := cfg.Password
+	if cfg.AnyTLSOpts != nil && cfg.AnyTLSOpts.Password != "" {
+		password = cfg.AnyTLSOpts.Password
+	}
+	if password == "" {
+		return nil, fmt.Errorf("AnyTLS 密码不能为空")
+	}
+
+	var opts []anytls.Option
+	if cfg.SNI != "" {
+		opts = append(opts, anytls.WithSNI(cfg.SNI))
+	}
+	if cfg.SkipCertVerify {
+		opts = append(opts, anytls.WithSkipCertVerify(true))
+	}
+	return anytls.NewAdapter(cfg.Name, cfg.Server, cfg.Port, password, opts...)
+}
+
+func (a *App) createMASQUE(cfg *config.ProxyConfig) (adapter.Adapter, error) {
+	password := cfg.Password
+	if cfg.MASQUEOpts != nil && cfg.MASQUEOpts.Password != "" {
+		password = cfg.MASQUEOpts.Password
+	}
+
+	var opts []masque.Option
+	if cfg.SNI != "" {
+		opts = append(opts, masque.WithSNI(cfg.SNI))
+	}
+	if cfg.SkipCertVerify {
+		opts = append(opts, masque.WithSkipCertVerify(true))
+	}
+	if cfg.MASQUEOpts != nil && cfg.MASQUEOpts.Host != "" {
+		opts = append(opts, masque.WithSNI(cfg.MASQUEOpts.Host))
+	}
+	return masque.NewAdapter(cfg.Name, cfg.Server, cfg.Port, password, opts...)
+}
+
+func (a *App) createTrustTunnel(cfg *config.ProxyConfig) (adapter.Adapter, error) {
+	password := cfg.Password
+	if cfg.TrustTunnelOpts != nil && cfg.TrustTunnelOpts.Token != "" {
+		password = cfg.TrustTunnelOpts.Token
+	}
+
+	var opts []trusttunnel.Option
+	if cfg.SNI != "" {
+		opts = append(opts, trusttunnel.WithSNI(cfg.SNI))
+	}
+	if cfg.SkipCertVerify {
+		opts = append(opts, trusttunnel.WithSkipCertVerify(true))
+	}
+	// 传输模式
+	if cfg.TrustTunnelOpts != nil {
+		switch cfg.TrustTunnelOpts.Mode {
+		case "ws":
+			host := cfg.TrustTunnelOpts.Host
+			path := cfg.TrustTunnelOpts.Path
+			if path == "" {
+				path = "/trusttunnel"
+			}
+			opts = append(opts, trusttunnel.WithWebSocket(path, host))
+		case "grpc":
+			serviceName := cfg.TrustTunnelOpts.Host
+			if serviceName == "" {
+				serviceName = "trusttunnel.TunnelService"
+			}
+			opts = append(opts, trusttunnel.WithGRPC(serviceName))
+		}
+	}
+	return trusttunnel.NewAdapter(cfg.Name, cfg.Server, cfg.Port, password, opts...)
+}
+
+func (a *App) createSudoku(cfg *config.ProxyConfig) (adapter.Adapter, error) {
+	password := cfg.Password
+	if cfg.SudokuOpts != nil && cfg.SudokuOpts.Key != "" {
+		password = cfg.SudokuOpts.Key
+	}
+	if password == "" {
+		return nil, fmt.Errorf("Sudoku 密钥不能为空")
+	}
+	return sudoku.NewAdapter(cfg.Name, cfg.Server, cfg.Port, password)
 }
 
 // initGroups 初始化代理组

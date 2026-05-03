@@ -370,6 +370,14 @@ func parseSubscription(content string) ([]Node, error) {
 			node = parseHysteria2(line)
 		case strings.HasPrefix(line, "ss://"):
 			node = parseShadowsocks(line)
+		case strings.HasPrefix(line, "anytls://"):
+			node = parseAnyTLS(line)
+		case strings.HasPrefix(line, "masque://"):
+			node = parseMASQUE(line)
+		case strings.HasPrefix(line, "trust-tunnel://"), strings.HasPrefix(line, "trusttunnel://"):
+			node = parseTrustTunnel(line)
+		case strings.HasPrefix(line, "sudoku://"):
+			node = parseSudoku(line)
 		}
 
 		if node != nil {
@@ -669,6 +677,164 @@ func parseShadowsocks(raw string) *Node {
 	}
 }
 
+// parseAnyTLS 解析 AnyTLS 链接
+// 格式: anytls://password@server:port#name?sni=example.com
+func parseAnyTLS(raw string) *Node {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil
+	}
+
+	password := ""
+	if u.User != nil {
+		password = u.User.Username()
+	}
+
+	host := u.Hostname()
+	portStr := u.Port()
+	if portStr == "" {
+		portStr = "443"
+	}
+	port := parsePort(portStr)
+
+	name := u.Fragment
+	if name == "" {
+		name = host
+	}
+
+	sni := u.Query().Get("sni")
+	if sni == "" {
+		sni = host
+	}
+
+	return &Node{
+		Name:       name,
+		Type:       "anytls",
+		Server:     host,
+		Port:       port,
+		Password:   password,
+		TLS:        true,
+		ServerName: sni,
+	}
+}
+
+// parseMASQUE 解析 MASQUE 链接
+// 格式: masque://password@server:port#name?sni=example.com
+func parseMASQUE(raw string) *Node {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil
+	}
+
+	password := ""
+	if u.User != nil {
+		password = u.User.Username()
+	}
+
+	host := u.Hostname()
+	portStr := u.Port()
+	if portStr == "" {
+		portStr = "443"
+	}
+	port := parsePort(portStr)
+
+	name := u.Fragment
+	if name == "" {
+		name = host
+	}
+
+	sni := u.Query().Get("sni")
+	if sni == "" {
+		sni = host
+	}
+
+	return &Node{
+		Name:       name,
+		Type:       "masque",
+		Server:     host,
+		Port:       port,
+		Password:   password,
+		TLS:        true,
+		ServerName: sni,
+		UDP:        true,
+	}
+}
+
+// parseTrustTunnel 解析 TrustTunnel 链接
+// 格式: trust-tunnel://password@server:port#name?sni=example.com&mode=ws&path=/tunnel
+func parseTrustTunnel(raw string) *Node {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil
+	}
+
+	password := ""
+	if u.User != nil {
+		password = u.User.Username()
+	}
+
+	host := u.Hostname()
+	portStr := u.Port()
+	if portStr == "" {
+		portStr = "443"
+	}
+	port := parsePort(portStr)
+
+	name := u.Fragment
+	if name == "" {
+		name = host
+	}
+
+	sni := u.Query().Get("sni")
+	if sni == "" {
+		sni = host
+	}
+
+	return &Node{
+		Name:       name,
+		Type:       "trust-tunnel",
+		Server:     host,
+		Port:       port,
+		Password:   password,
+		TLS:        true,
+		ServerName: sni,
+	}
+}
+
+// parseSudoku 解析 Sudoku 链接
+// 格式: sudoku://password@server:port#name
+func parseSudoku(raw string) *Node {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil
+	}
+
+	password := ""
+	if u.User != nil {
+		password = u.User.Username()
+	}
+
+	host := u.Hostname()
+	portStr := u.Port()
+	if portStr == "" {
+		portStr = "443"
+	}
+	port := parsePort(portStr)
+
+	name := u.Fragment
+	if name == "" {
+		name = host
+	}
+
+	return &Node{
+		Name:     name,
+		Type:     "sudoku",
+		Server:   host,
+		Port:     port,
+		Password: password,
+	}
+}
+
 // parsePort 解析端口
 func parsePort(v any) int {
 	switch val := v.(type) {
@@ -758,6 +924,24 @@ func (n *Node) ToConfigProxies() map[string]any {
 	case "ss":
 		proxy["password"] = n.Password
 		proxy["cipher"] = n.Cipher
+
+	case "anytls":
+		proxy["password"] = n.Password
+		proxy["sni"] = n.ServerName
+		proxy["skip-cert-verify"] = n.SkipCert
+
+	case "masque":
+		proxy["password"] = n.Password
+		proxy["sni"] = n.ServerName
+		proxy["skip-cert-verify"] = n.SkipCert
+
+	case "trust-tunnel":
+		proxy["password"] = n.Password
+		proxy["sni"] = n.ServerName
+		proxy["skip-cert-verify"] = n.SkipCert
+
+	case "sudoku":
+		proxy["password"] = n.Password
 	}
 
 	if n.UDP {

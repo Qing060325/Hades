@@ -17,6 +17,10 @@
 | Hysteria2 | QUIC (UDP) | TLS | ✅ | ✅ | ❌ | 高延迟网络 |
 | TUIC | QUIC (UDP) | TLS | ✅ | ✅ | ❌ | 低延迟优化 |
 | WireGuard | UDP | ChaCha20 | ✅ | ✅ | ✅ | VPN 场景 |
+| AnyTLS | TCP | TLS 1.3 | ❌ | ✅ | ❌ | TLS 多路复用 |
+| MASQUE | QUIC (HTTP/3) | TLS | ✅ | ✅ | ❌ | HTTP/3 代理 |
+| TrustTunnel | TCP/WS/gRPC | TLS | ❌ | ❌ | ❌ | SNI 路由代理 |
+| Sudoku | TCP | 密码哈希 | ❌ | ❌ | ❌ | 谜题认证代理 |
 
 ---
 
@@ -433,6 +437,192 @@ wg genpsk > presharedkey
 
 ---
 
+## AnyTLS
+
+### 协议简介
+
+AnyTLS 是基于 TLS 1.3 的代理协议，使用密码派生密钥进行认证，支持在单个 TLS 连接上多路复用多个流。
+
+### 技术特点
+
+- **TLS 1.3**: 现代加密标准
+- **HKDF 密钥派生**: 从密码安全派生会话密钥
+- **流多路复用**: 单连接多流，减少握手开销
+- **密码认证**: 基于 SHA256 的密钥哈希验证
+
+### 协议流程
+
+```
+客户端 → [TLS 1.3 握手] → [HKDF 密钥派生] → [认证] → [多路复用流] → 目标服务器
+```
+
+### 配置示例
+
+```yaml
+proxies:
+  - name: "anytls-node"
+    type: anytls
+    server: anytls.example.com
+    port: 443
+    password: "your-password"
+    sni: anytls.example.com
+    skip-cert-verify: false
+```
+
+### 特点
+
+- ✅ TLS 1.3 加密
+- ✅ 流多路复用
+- ✅ 密码认证
+- ❌ 不支持 UDP
+
+---
+
+## MASQUE
+
+### 协议简介
+
+MASQUE 是基于 HTTP/3 (QUIC) 的代理协议 (RFC 9298)，支持代理 UDP 和 IP 数据包。
+
+### 技术特点
+
+- **HTTP/3 传输**: 基于 QUIC 的 HTTP/3
+- **UDP 代理**: 原生 UDP 代理支持
+- **IP 代理**: 支持 IP 数据包代理
+- **CONNECT-UDP**: RFC 9298 标准方法
+
+### 协议流程
+
+```
+客户端 → [QUIC 连接] → [HTTP/3 请求] → [CONNECT-UDP] → 目标服务器
+```
+
+### 配置示例
+
+```yaml
+proxies:
+  - name: "masque-node"
+    type: masque
+    server: masque.example.com
+    port: 443
+    password: "your-password"
+    sni: masque.example.com
+
+    # MASQUE 高级选项
+    masque-opts:
+      host: masque.example.com
+      port: 443
+      password: "your-password"
+```
+
+### 特点
+
+- ✅ HTTP/3 传输
+- ✅ 原生 UDP 代理
+- ✅ IP 数据包代理
+- ✅ IETF 标准 (RFC 9298)
+- ⚠️ 需要 QUIC 支持
+
+---
+
+## TrustTunnel
+
+### 协议简介
+
+TrustTunnel 使用 TLS + SNI 路由，支持 WebSocket 和 gRPC 传输，通过 SNI 字段实现后端路由。
+
+### 技术特点
+
+- **SNI 路由**: 通过 TLS SNI 字段选择后端
+- **多传输**: 支持 TCP、WebSocket、gRPC
+- **密码认证**: SHA256 哈希认证
+- **协议魔数**: 0x54 ('T') 标识
+
+### 传输模式
+
+| 模式 | 描述 |
+|------|------|
+| `tcp` | 原生 TCP (默认) |
+| `ws` | WebSocket |
+| `grpc` | gRPC (HTTP/2) |
+
+### 配置示例
+
+```yaml
+proxies:
+  - name: "trusttunnel-node"
+    type: trust-tunnel
+    server: trust.example.com
+    port: 443
+    password: "your-password"
+    sni: trust.example.com
+
+    # 传输模式
+    trust-tunnel-opts:
+      mode: ws
+      host: trust.example.com
+      path: /tunnel
+      token: "your-token"
+```
+
+### 特点
+
+- ✅ SNI 路由
+- ✅ 多传输支持
+- ✅ WebSocket/gRPC
+- ❌ 不支持 UDP
+
+---
+
+## Sudoku
+
+### 协议简介
+
+Sudoku 使用基于数独谜题的认证机制，客户端需要解决服务端发送的数独谜题才能建立连接。
+
+### 技术特点
+
+- **数独认证**: 9×9 数独谜题求解
+- **回溯算法**: 高效数独求解器
+- **密码哈希**: SHA256(solution + password + nonce + salt)
+- **协议魔数**: 0x53 ('S') 标识
+
+### 认证流程
+
+```
+客户端 → [magic + version + nonce]
+服务端 → [9×9 puzzle grid]
+客户端 → [solution + auth hash]
+服务端 → [status: 0x00 = OK]
+客户端 → [command + target address]
+```
+
+### 配置示例
+
+```yaml
+proxies:
+  - name: "sudoku-node"
+    type: sudoku
+    server: sudoku.example.com
+    port: 443
+    password: "your-password"
+
+    # Sudoku 高级选项
+    sudoku-opts:
+      key: "your-key"
+      iv: "your-iv"
+```
+
+### 特点
+
+- ✅ 独特认证机制
+- ✅ 抗扫描
+- ✅ 密码保护
+- ❌ 不支持 UDP
+- ⚠️ 认证延迟较高
+
+---
+
 ## 协议选择建议
 
 ### 按场景选择
@@ -446,16 +636,23 @@ wg genpsk > presharedkey
 | VPN 需求 | WireGuard | 现代 VPN |
 | 兼容性 | VMess | 广泛支持 |
 | 传统环境 | Shadowsocks | 简单稳定 |
+| TLS 多路复用 | AnyTLS | TLS 1.3 + 流复用 |
+| UDP 代理 | MASQUE | HTTP/3 + UDP |
+| SNI 路由 | TrustTunnel | 灵活路由 |
+| 抗扫描 | Sudoku | 谜题认证 |
 
 ### 按需求选择
 
 | 需求 | 推荐协议 |
 |------|----------|
 | 最高性能 | VLESS + Vision |
-| 最佳 UDP | Hysteria2 / TUIC |
+| 最佳 UDP | Hysteria2 / TUIC / MASQUE |
 | 最强伪装 | Trojan |
 | 最简配置 | Shadowsocks |
 | VPN 功能 | WireGuard |
+| TLS 多路复用 | AnyTLS |
+| 灵活路由 | TrustTunnel |
+| 抗扫描 | Sudoku |
 
 ---
 

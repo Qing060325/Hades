@@ -1,0 +1,38 @@
+# TrustTunnel 协议配置模板
+
+# TrustTunnel 使用 TLS + SNI 路由
+# 特点: SNI 路由、WebSocket/gRPC 传输、密码认证
+
+proxies:
+  - name: "trusttunnel-example"
+    type: trust-tunnel
+    server: example.com
+    port: 443
+    password: "your-password"
+
+    # TLS 配置
+    sni: example.com
+    skip-cert-verify: false
+
+    # TrustTunnel 高级选项 (可选)
+    # trust-tunnel-opts:
+    #   mode: ws          # 传输模式: ws / grpc
+    #   host: example.com # WebSocket/gRPC Host
+    #   path: /tunnel     # WebSocket 路径
+    #   token: "your-token"
+
+    # gRPC 模式示例
+    # trust-tunnel-opts:
+    #   mode: grpc
+    #   host: trusttunnel.TunnelService
+
+# 完整示例
+proxy-groups:
+  - name: "proxy"
+    type: select
+    proxies:
+      - trusttunnel-example
+      - DIRECT
+
+rules:
+  - MATCH,proxy

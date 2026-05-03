@@ -1,0 +1,27 @@
+# Sudoku 协议配置模板
+
+# Sudoku 使用基于数独谜题的认证机制
+# 特点: 数独谜题认证、TCP 代理、密码哈希验证
+
+proxies:
+  - name: "sudoku-example"
+    type: sudoku
+    server: example.com
+    port: 443
+    password: "your-password"
+
+    # Sudoku 高级选项 (可选)
+    # sudoku-opts:
+    #   key: "your-key"
+    #   iv: "your-iv"
+
+# 完整示例
+proxy-groups:
+  - name: "proxy"
+    type: select
+    proxies:
+      - sudoku-example
+      - DIRECT
+
+rules:
+  - MATCH,proxy

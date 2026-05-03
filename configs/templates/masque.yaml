@@ -1,0 +1,33 @@
+# MASQUE 协议配置模板
+
+# MASQUE 基于 HTTP/3 (QUIC) 协议 (RFC 9298)
+# 特点: UDP 代理、IP 数据包代理、HTTP/3 传输
+
+proxies:
+  - name: "masque-example"
+    type: masque
+    server: example.com
+    port: 443
+    password: "your-password"
+
+    # TLS 配置
+    sni: example.com
+    skip-cert-verify: false
+
+    # MASQUE 高级选项 (可选)
+    # masque-opts:
+    #   host: example.com
+    #   port: 443
+    #   username: "user"
+    #   password: "your-password"
+
+# 完整示例
+proxy-groups:
+  - name: "proxy"
+    type: select
+    proxies:
+      - masque-example
+      - DIRECT
+
+rules:
+  - MATCH,proxy

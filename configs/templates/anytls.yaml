@@ -1,0 +1,31 @@
+# AnyTLS 协议配置模板
+
+# AnyTLS 使用 TLS 1.3 + 基于密码的密钥派生
+# 特点: TLS 1.3 加密、流多路复用、密码认证
+
+proxies:
+  - name: "anytls-example"
+    type: anytls
+    server: example.com
+    port: 443
+    password: "your-password"
+
+    # TLS 配置
+    sni: example.com
+    skip-cert-verify: false
+
+    # AnyTLS 高级选项 (可选)
+    # anytls-opts:
+    #   password: "your-password"
+    #   padding-length: 0
+
+# 完整示例
+proxy-groups:
+  - name: "proxy"
+    type: select
+    proxies:
+      - anytls-example
+      - DIRECT
+
+rules:
+  - MATCH,proxy
