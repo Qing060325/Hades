@@ -11,6 +11,20 @@ LOG_DIR="/var/log/hades"
 SERVICE_NAME="hades"
 REPO="Qing060325/Hades"
 
+# 架构检测
+detect_arch() {
+    local arch
+    arch="$(uname -m)"
+    case "$arch" in
+        x86_64|amd64)   echo "amd64" ;;
+        aarch64|arm64)   echo "arm64" ;;
+        armv7l|armhf)    echo "armv6l" ;;
+        i386|i686)       echo "386" ;;
+        *)               echo "amd64" ;;
+    esac
+}
+GOARCH=$(detect_arch)
+
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 info()  { echo -e "${CYAN}[INFO]${NC} $1"; }
 ok()    { echo -e "${GREEN}[OK]${NC}   $1"; }
@@ -30,10 +44,10 @@ cmd_install() {
 
     # 2. 安装 Go (如果需要)
     if ! command -v go &>/dev/null || ! go version &>/dev/null; then
-        info "安装 Go ${GO_VERSION}..."
+        info "安装 Go ${GO_VERSION} (${GOARCH})..."
         # dl.google.com 在国内可达，比镜像站更稳定
         wget -q --show-progress --timeout=60 \
-            "https://dl.google.com/go/go${GO_VERSION}.linux-amd64.tar.gz" \
+            "https://dl.google.com/go/go${GO_VERSION}.linux-${GOARCH}.tar.gz" \
             -O /tmp/go-hades.tar.gz || err "Go 下载失败"
         tar -C /usr/local -xzf /tmp/go-hades.tar.gz
         export PATH=$PATH:/usr/local/go/bin
@@ -153,6 +167,11 @@ cmd_uninstall() {
     if [[ "$ans" == "y" || "$ans" == "Y" ]]; then
         rm -rf ${CONFIG_DIR} ${LOG_DIR}
         ok "配置已删除"
+    fi
+    # 删除 hades 用户（如果存在）
+    if id hades &>/dev/null; then
+        userdel hades 2>/dev/null || true
+        ok "hades 用户已删除"
     fi
     ok "Hades 已卸载"
 }

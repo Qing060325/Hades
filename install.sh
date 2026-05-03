@@ -59,9 +59,9 @@ confirm() {
 download() {
   local url="$1" output="$2"
   if command -v curl &>/dev/null; then
-    curl -fsSL "$url" -o "$output"
+    curl -fsSL --connect-timeout 10 --max-time 120 "$url" -o "$output"
   elif command -v wget &>/dev/null; then
-    wget -q "$url" -O "$output"
+    wget -q --timeout=120 --tries=3 "$url" -O "$output"
   else
     die "需要 curl 或 wget"
   fi
@@ -125,11 +125,23 @@ setup_user_mode() {
 # ────────────────────── 获取最新版本 ──────────────────────
 
 get_latest_version() {
-  local ver
-  ver=$(download "${GITHUB_API}/releases/latest" /tmp/hades-release.json 2>/dev/null \
-    && grep '"tag_name"' /tmp/hades-release.json | sed -E 's/.*"([^"]+)".*/\1/' \
-    || echo "")
-  rm -f /tmp/hades-release.json
+  local ver=""
+  local tmp_file="/tmp/hades-release.json"
+
+  # 尝试从 GitHub API 获取
+  if download "${GITHUB_API}/releases/latest" "$tmp_file" 2>/dev/null; then
+    ver=$(grep '"tag_name"' "$tmp_file" 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/' || echo "")
+  fi
+  rm -f "$tmp_file"
+
+  # 回退: 从 releases 页面解析
+  if [ -z "$ver" ]; then
+    ver=$(download "${GITHUB_URL}/releases/latest" /tmp/hades-release-redirect 2>/dev/null \
+      && grep -oE 'tag/[^"]+' /tmp/hades-release-redirect | head -1 | sed 's/tag\///' \
+      || echo "")
+    rm -f /tmp/hades-release-redirect
+  fi
+
   echo "${ver:-$FALLBACK_VERSION}"
 }
 
@@ -220,11 +232,14 @@ build_from_source() {
   fi
   ok "Go 版本: ${go_ver}"
 
+  # 设置 GOPROXY 加速依赖下载（国内友好）
+  export GOPROXY="${GOPROXY:-https://goproxy.cn,https://goproxy.io,direct}"
+
   local tmp_dir; tmp_dir=$(mktemp -d)
-  git clone "https://github.com/${REPO}.git" "$tmp_dir"
+  git clone --depth 1 "https://github.com/${REPO}.git" "$tmp_dir"
   cd "$tmp_dir"
-  make deps 2>/dev/null || go mod tidy
-  make build 2>/dev/null || go build -o bin/hades ./cmd/hades
+  go mod tidy
+  CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/hades ./cmd/hades
 
   mkdir -p "$INSTALL_DIR"
   mv bin/hades "${INSTALL_DIR}/hades"
