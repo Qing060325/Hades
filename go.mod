@@ -1,6 +1,6 @@
 module github.com/Qing060325/Hades
 
-go 1.25.0
+go 1.22.0
 
 require (
 	github.com/cilium/ebpf v0.21.0

@@ -20,7 +20,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.22'
 
       - name: Build binaries
         run: |
@@ -40,6 +40,12 @@ jobs:
           GOOS=windows GOARCH=amd64 go build -ldflags "${LDFLAGS}" -o dist/hades-windows-amd64.exe ./cmd/hades
           # Windows ARM64
           GOOS=windows GOARCH=arm64 go build -ldflags "${LDFLAGS}" -o dist/hades-windows-arm64.exe ./cmd/hades
+          # OpenWrt MIPS
+          GOOS=linux GOARCH=mips GOMIPS=softfloat go build -ldflags "${LDFLAGS}" -o dist/hades-linux-mips ./cmd/hades
+          # OpenWrt MIPSLE
+          GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build -ldflags "${LDFLAGS}" -o dist/hades-linux-mipsle ./cmd/hades
+          # OpenWrt ARMv7
+          GOOS=linux GOARCH=arm GOARM=7 go build -ldflags "${LDFLAGS}" -o dist/hades-linux-armv7 ./cmd/hades
 
       - name: Generate Release Notes
         id: release_notes
@@ -80,7 +86,7 @@ jobs:
             BODY="${BODY}## 📝 其他变更\n${OTHER}\n"
           fi
 
-          BODY="${BODY}## 📦 下载\n\n| 平台 | 架构 | 文件 |\n|------|------|------|\n| Linux | AMD64 | hades-linux-amd64 |\n| Linux | ARM64 | hades-linux-arm64 |\n| macOS | AMD64 | hades-darwin-amd64 |\n| macOS | ARM64 | hades-darwin-arm64 |\n| Windows | AMD64 | hades-windows-amd64.exe |\n| Windows | ARM64 | hades-windows-arm64.exe |\n"
+          BODY="${BODY}## 📦 下载\n\n| 平台 | 架构 | 文件 |\n|------|------|------|\n| Linux | AMD64 | hades-linux-amd64 |\n| Linux | ARM64 | hades-linux-arm64 |\n| OpenWrt | MIPS | hades-linux-mips |\n| OpenWrt | MIPSLE | hades-linux-mipsle |\n| OpenWrt | ARMv7 | hades-linux-armv7 |\n| macOS | AMD64 | hades-darwin-amd64 |\n| macOS | ARM64 | hades-darwin-arm64 |\n| Windows | AMD64 | hades-windows-amd64.exe |\n| Windows | ARM64 | hades-windows-arm64.exe |\n\n**OpenWrt 一键安装:**\n\`\`\`bash\ncurl -fsSL https://raw.githubusercontent.com/Qing060325/Hades/main/openwrt/install.sh | sh\n\`\`\`\n"
 
           echo "body<<EOF" >> $GITHUB_OUTPUT
           echo -e "$BODY" >> $GITHUB_OUTPUT

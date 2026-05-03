@@ -7,7 +7,7 @@ var (
 	// BuildTime 构建时间
 	BuildTime = "unknown"
 	// GoVersion Go版本
-	GoVersion = "go1.25.0"
+	GoVersion = "go1.22.0"
 )
 
 // Info 版本信息结构
