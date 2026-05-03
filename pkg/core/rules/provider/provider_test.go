@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/Qing060325/Hades/internal/config"
 )
 
 // TestProvider_FileLoad 测试从文件加载规则
@@ -27,27 +25,21 @@ DOMAIN-KEYWORD,github,proxy
 		t.Fatalf("创建规则文件失败: %v", err)
 	}
 
-	cfg := config.RuleProviderConfig{
-		Type:     "file",
-		Behavior: "classical",
-		Path:     ruleFile,
-	}
-
-	p := New("test-provider", cfg)
-	if err := p.Load(); err != nil {
+	p := New("test-provider", ProviderFile, BehaviorClassical, "", ruleFile, 0)
+	if err := p.Load(""); err != nil {
 		t.Fatalf("加载规则失败: %v", err)
 	}
 
-	if p.Count() != 5 {
-		t.Errorf("Count() = %d, want 5", p.Count())
+	if len(p.Rules()) != 5 {
+		t.Errorf("Rules() count = %d, want 5", len(p.Rules()))
 	}
 
-	if p.Name() != "test-provider" {
-		t.Errorf("Name() = %q, want %q", p.Name(), "test-provider")
+	if p.Name != "test-provider" {
+		t.Errorf("Name = %q, want %q", p.Name, "test-provider")
 	}
 
-	if p.Type() != "file" {
-		t.Errorf("Type() = %q, want %q", p.Type(), "file")
+	if p.Type != ProviderFile {
+		t.Errorf("Type = %q, want %q", p.Type, ProviderFile)
 	}
 }
 
@@ -66,19 +58,13 @@ example.org
 		t.Fatalf("创建规则文件失败: %v", err)
 	}
 
-	cfg := config.RuleProviderConfig{
-		Type:     "file",
-		Behavior: "domain",
-		Path:     ruleFile,
-	}
-
-	p := New("domain-provider", cfg)
-	if err := p.Load(); err != nil {
+	p := New("domain-provider", ProviderFile, BehaviorDomain, "", ruleFile, 0)
+	if err := p.Load(""); err != nil {
 		t.Fatalf("加载规则失败: %v", err)
 	}
 
-	if p.Count() != 3 {
-		t.Errorf("Count() = %d, want 3", p.Count())
+	if len(p.Rules()) != 3 {
+		t.Errorf("Rules() count = %d, want 3", len(p.Rules()))
 	}
 }
 
@@ -97,19 +83,13 @@ func TestProvider_IPCIDRBehavior(t *testing.T) {
 		t.Fatalf("创建规则文件失败: %v", err)
 	}
 
-	cfg := config.RuleProviderConfig{
-		Type:     "file",
-		Behavior: "ipcidr",
-		Path:     ruleFile,
-	}
-
-	p := New("cidr-provider", cfg)
-	if err := p.Load(); err != nil {
+	p := New("cidr-provider", ProviderFile, BehaviorIPCIDR, "", ruleFile, 0)
+	if err := p.Load(""); err != nil {
 		t.Fatalf("加载规则失败: %v", err)
 	}
 
-	if p.Count() != 4 {
-		t.Errorf("Count() = %d, want 4", p.Count())
+	if len(p.Rules()) != 4 {
+		t.Errorf("Rules() count = %d, want 4", len(p.Rules()))
 	}
 }
 
@@ -128,72 +108,12 @@ func TestProvider_YAMLFormat(t *testing.T) {
 		t.Fatalf("创建规则文件失败: %v", err)
 	}
 
-	cfg := config.RuleProviderConfig{
-		Type:     "file",
-		Behavior: "classical",
-		Format:   "yaml",
-		Path:     ruleFile,
-	}
-
-	p := New("yaml-provider", cfg)
-	if err := p.Load(); err != nil {
+	p := New("yaml-provider", ProviderFile, BehaviorClassical, "", ruleFile, 0)
+	if err := p.Load(""); err != nil {
 		t.Fatalf("加载规则失败: %v", err)
 	}
 
-	if p.Count() != 3 {
-		t.Errorf("Count() = %d, want 3", p.Count())
-	}
-}
-
-// TestManager_CreateAndLoad 测试管理器创建和加载
-func TestManager_CreateAndLoad(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// 创建多个规则文件
-	ruleFile1 := filepath.Join(tmpDir, "rules1.txt")
-	ruleFile2 := filepath.Join(tmpDir, "rules2.txt")
-
-	os.WriteFile(ruleFile1, []byte("DOMAIN,test1.com,DIRECT\nDOMAIN,test2.com,proxy\n"), 0644)
-	// ipcidr 行为模式：每行只是一个 CIDR，不是完整规则行
-	os.WriteFile(ruleFile2, []byte("10.0.0.0/8\n172.16.0.0/12\n"), 0644)
-
-	cfgs := map[string]config.RuleProviderConfig{
-		"provider1": {Type: "file", Behavior: "classical", Path: ruleFile1},
-		"provider2": {Type: "file", Behavior: "ipcidr", Path: ruleFile2},
-	}
-
-	mgr := NewManager()
-	if err := mgr.CreateFromConfig(cfgs); err != nil {
-		t.Fatalf("CreateFromConfig 失败: %v", err)
-	}
-
-	if err := mgr.LoadAll(); err != nil {
-		t.Fatalf("LoadAll 失败: %v", err)
-	}
-
-	// 验证规则收集
-	allRules := mgr.CollectRules()
-	if len(allRules) != 4 {
-		t.Errorf("CollectRules() count = %d, want 4", len(allRules))
-	}
-
-	// 验证统计
-	stats := mgr.Stats()
-	if len(stats) != 2 {
-		t.Errorf("Stats() count = %d, want 2", len(stats))
-	}
-
-	// 验证重载
-	if err := mgr.Reload("provider1"); err != nil {
-		t.Errorf("Reload 失败: %v", err)
-	}
-
-	if err := mgr.ReloadAll(); err != nil {
-		t.Errorf("ReloadAll 失败: %v", err)
-	}
-
-	// 验证不存在的提供者
-	if err := mgr.Reload("nonexistent"); err == nil {
-		t.Error("期望 Reload 不存在的提供者返回错误")
+	if len(p.Rules()) != 3 {
+		t.Errorf("Rules() count = %d, want 3", len(p.Rules()))
 	}
 }

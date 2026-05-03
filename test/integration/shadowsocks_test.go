@@ -100,7 +100,7 @@ func TestShadowsocksAEAD_ConcurrentDial(t *testing.T) {
 			defer cancel()
 
 			metadata := &adapter.Metadata{
-				Network: "tcp",
+				NetWork: "tcp",
 				Host:    "127.0.0.1",
 				DstPort: 80,
 				Type:    adapter.MetadataTypeSOCKS,

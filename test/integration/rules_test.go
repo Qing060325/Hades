@@ -136,7 +136,7 @@ func TestRuleEngine_ProcessName(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			metadata := &adapter.Metadata{Process: tc.process}
+			metadata := &adapter.Metadata{ProcessName: tc.process}
 			result := engine.Match(metadata)
 			if result != tc.expected {
 				t.Errorf("got %q, want %q", result, tc.expected)

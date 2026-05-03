@@ -216,6 +216,15 @@ rules:
 | Hysteria2 | ❌ | ✅ | ✅ | 基于 QUIC，抗丢包 |
 | TUIC | ❌ | ✅ | ✅ | 基于 QUIC，低延迟 |
 | WireGuard | ❌ | ✅ | ✅ | 现代 VPN 协议 |
+| Snell | ❌ | ✅ | ✅ | Surru 混淆协议 |
+| SSH | ❌ | ✅ | ❌ | SSH 隧道代理 |
+| Mieru | ❌ | ✅ | ✅ | 端口跳跃，抗封锁 |
+| AnyTLS | ❌ | ✅ | ✅ | TLS 填充混淆 |
+| MASQUE | ❌ | ✅ | ✅ | HTTP/3 CONNECT-UDP |
+| Trust-Tunnel | ❌ | ✅ | ✅ | WebSocket/gRPC 隧道 |
+| Sudoku | ❌ | ✅ | ✅ | 自定义加密协议 |
+| AmneziaWG | ❌ | ✅ | ✅ | 抗审查 WireGuard |
+| Sing-Mux | ❌ | ✅ | ✅ | 多路复用，带宽聚合 |
 
 ---
 

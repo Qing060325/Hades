@@ -145,12 +145,23 @@ type ProxyConfig struct {
 	Hysteria2Opts *Hysteria2Opts `yaml:"hysteria2-opts"`
 	TUICOpts     *TUICOpts       `yaml:"tuic-opts"`
 	WireGuardOpts *WireGuardOpts `yaml:"wireguard-opts"`
+	SnellOpts    *SnellOpts     `yaml:"snell-opts"`
+	SSHOpts      *SSHOpts       `yaml:"ssh-opts"`
+	MieruOpts    *MieruOpts     `yaml:"mieru-opts"`
+	AnyTLSOpts   *AnyTLSOpts    `yaml:"anytls-opts"`
+	MASQUEOpts   *MASQUEOpts    `yaml:"masque-opts"`
+	TrustTunnelOpts *TrustTunnelOpts `yaml:"trust-tunnel-opts"`
+	SudokuOpts   *SudokuOpts    `yaml:"sudoku-opts"`
+	AmneziaWGOpts *AmneziaWGOpts `yaml:"amneziawg-opts"`
+	SingMuxOpts  *SingMuxOpts   `yaml:"singmux-opts"`
 	// WireGuard 直接字段
 	PrivateKey   string   `yaml:"private-key"`
 	PublicKey    string   `yaml:"public-key"`
 	PreSharedKey string   `yaml:"pre-shared-key"`
 	MTU          int      `yaml:"mtu"`
 	Reserved     []int    `yaml:"reserved"`
+	// Multipath TCP
+	MPTCP bool `yaml:"mptcp"`
 }
 
 // RealityConfig Reality 配置
@@ -211,6 +222,83 @@ type WgPeer struct {
 	Endpoint     string   `yaml:"endpoint"`
 	AllowedIPs   []string `yaml:"allowed-ips"`
 	KeepAlive    int      `yaml:"keepalive"`
+}
+
+// SnellOpts Snell 配置
+type SnellOpts struct {
+	PSK      string `yaml:"psk"`
+	Version  int    `yaml:"version"`
+	ObfsMode string `yaml:"obfs-mode"`
+	ObfsHost string `yaml:"obfs-host"`
+}
+
+// SSHOpts SSH 配置
+type SSHOpts struct {
+	Username           string `yaml:"username"`
+	Password           string `yaml:"password"`
+	PrivateKey         string `yaml:"private-key"`
+	PrivateKeyPassphrase string `yaml:"private-key-passphrase"`
+	HostKey            string `yaml:"host-key"`
+}
+
+// MieruOpts Mieru 配置
+type MieruOpts struct {
+	PortHopping bool   `yaml:"port-hopping"`
+	PortRange   string `yaml:"port-range"`
+	Protocol    string `yaml:"protocol"` // tcp / udp
+}
+
+// AnyTLSOpts AnyTLS 配置
+type AnyTLSOpts struct {
+	Password      string `yaml:"password"`
+	PaddingLength int    `yaml:"padding-length"`
+}
+
+// MASQUEOpts MASQUE 配置
+type MASQUEOpts struct {
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+}
+
+// TrustTunnelOpts Trust-Tunnel 配置
+type TrustTunnelOpts struct {
+	Mode  string `yaml:"mode"` // ws / grpc
+	Host  string `yaml:"host"`
+	Path  string `yaml:"path"`
+	Token string `yaml:"token"`
+}
+
+// SudokuOpts Sudoku 配置
+type SudokuOpts struct {
+	Key string `yaml:"key"`
+	IV  string `yaml:"iv"`
+}
+
+// AmneziaWGOpts AmneziaWG 配置
+type AmneziaWGOpts struct {
+	Jc int `yaml:"jc"`
+	Jmin int `yaml:"jmin"`
+	Jmax int `yaml:"jmax"`
+	S1 int `yaml:"s1"`
+	S2 int `yaml:"s2"`
+	H1 int `yaml:"h1"`
+	H2 int `yaml:"h2"`
+	H3 int `yaml:"h3"`
+	H4 int `yaml:"h4"`
+}
+
+// SingMuxOpts Sing-Mux 配置
+type SingMuxOpts struct {
+	Protocol       string `yaml:"protocol"`
+	MaxConnections int    `yaml:"max-connections"`
+	MinStreams      int    `yaml:"min-streams"`
+	MaxStreams      int    `yaml:"max-streams"`
+	Statistic      bool   `yaml:"statistic"`
+	Padding        bool   `yaml:"padding"`
+	BrutalUp       string `yaml:"brutal-up"`
+	BrutalDown     string `yaml:"brutal-down"`
 }
 
 // ProxyGroupConfig 代理组配置

@@ -29,7 +29,13 @@ const (
 	TypeWireGuard    AdapterType = "WireGuard"
 	TypeSnell        AdapterType = "Snell"
 	TypeSSH          AdapterType = "SSH"
+	TypeMieru        AdapterType = "Mieru"
 	TypeRelay        AdapterType = "Relay"
+	TypeAmneziaWG    AdapterType = "AmneziaWG"
+	TypeAnyTLS       AdapterType = "AnyTLS"
+	TypeMASQUE       AdapterType = "MASQUE"
+	TypeTrustTunnel  AdapterType = "TrustTunnel"
+	TypeSudoku       AdapterType = "Sudoku"
 )
 
 // MetadataType 元数据类型

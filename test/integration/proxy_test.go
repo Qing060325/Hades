@@ -33,7 +33,7 @@ func TestDirectAdapter_MultipleConnections(t *testing.T) {
 			defer cancel()
 
 			metadata := &adapter.Metadata{
-				Network: "tcp",
+				NetWork: "tcp",
 				Host:    "127.0.0.1",
 				DstPort: uint16(mustParsePort(targetAddr)),
 				Type:    adapter.MetadataTypeHTTP,
@@ -68,7 +68,7 @@ func TestRejectAdapter_DialFails(t *testing.T) {
 	defer cancel()
 
 	metadata := &adapter.Metadata{
-		Network: "tcp",
+		NetWork: "tcp",
 		Host:    "127.0.0.1",
 		DstPort: 80,
 		Type:    adapter.MetadataTypeHTTP,

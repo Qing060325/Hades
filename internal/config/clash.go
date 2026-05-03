@@ -146,6 +146,61 @@ type ClashProxyConfig struct {
 	User    string `yaml:"user"`
 	Pass    string `yaml:"pass"`
 	Timeout int    `yaml:"timeout"`
+
+	// Snell
+	PSK      string `yaml:"psk"`
+	ObfsMode string `yaml:"obfs-mode"`
+	ObfsHost string `yaml:"obfs-host"`
+
+	// SSH
+	Username           string `yaml:"username"`
+	SSHPrivateKey      string `yaml:"ssh-private-key"`
+	SSHPrivateKeyPassphrase string `yaml:"ssh-private-key-passphrase"`
+	HostKey            string `yaml:"host-key"`
+
+	// Mieru
+	PortHopping bool   `yaml:"port-hopping"`
+	PortRange   string `yaml:"port-range"`
+
+	// AnyTLS
+	AnyTLSPassword string `yaml:"anytls-password"`
+	PaddingLength  int    `yaml:"padding-length"`
+
+	// MASQUE
+	Host string `yaml:"host"`
+
+	// Trust-Tunnel
+	Mode  string `yaml:"mode"`
+	Path  string `yaml:"path"`
+	Token string `yaml:"token"`
+
+	// Sudoku
+	Key string `yaml:"key"`
+	IV  string `yaml:"iv"`
+
+	// AmneziaWG
+	Jc   int `yaml:"jc"`
+	Jmin int `yaml:"jmin"`
+	Jmax int `yaml:"jmax"`
+	S1   int `yaml:"s1"`
+	S2   int `yaml:"s2"`
+	H1   int `yaml:"h1"`
+	H2   int `yaml:"h2"`
+	H3   int `yaml:"h3"`
+	H4   int `yaml:"h4"`
+
+	// Sing-Mux
+	SingMuxProtocol    string `yaml:"singmux-protocol"`
+	MaxConnections     int    `yaml:"max-connections"`
+	MinStreams         int    `yaml:"min-streams"`
+	MaxStreams         int    `yaml:"max-streams"`
+	Statistic          bool   `yaml:"statistic"`
+	Padding            bool   `yaml:"padding"`
+	BrutalUp           string `yaml:"brutal-up"`
+	BrutalDown         string `yaml:"brutal-down"`
+
+	// MPTCP
+	MPTCP bool `yaml:"mptcp"`
 }
 
 // SmuxConfig 多路复用配置
@@ -311,6 +366,104 @@ func convertClashProxy(p ClashProxyConfig) ProxyConfig {
 		cfg.ALPN = p.ALPN
 	}
 
+	// Snell 特有字段
+	if p.Type == "snell" {
+		cfg.SnellOpts = &SnellOpts{
+			PSK:      p.PSK,
+			ObfsMode: p.ObfsMode,
+			ObfsHost: p.ObfsHost,
+		}
+		// Snell version defaults to 0 (auto-detect)
+	}
+
+	// SSH 特有字段
+	if p.Type == "ssh" {
+		cfg.SSHOpts = &SSHOpts{
+			Username:             p.Username,
+			Password:             p.Password,
+			PrivateKey:           p.SSHPrivateKey,
+			PrivateKeyPassphrase: p.SSHPrivateKeyPassphrase,
+			HostKey:              p.HostKey,
+		}
+	}
+
+	// Mieru 特有字段
+	if p.Type == "mieru" {
+		cfg.MieruOpts = &MieruOpts{
+			PortHopping: p.PortHopping,
+			PortRange:   p.PortRange,
+			Protocol:    p.Protocol,
+		}
+	}
+
+	// AnyTLS 特有字段
+	if p.Type == "anytls" {
+		cfg.AnyTLSOpts = &AnyTLSOpts{
+			Password:      p.AnyTLSPassword,
+			PaddingLength: p.PaddingLength,
+		}
+	}
+
+	// MASQUE 特有字段
+	if p.Type == "masque" {
+		cfg.MASQUEOpts = &MASQUEOpts{
+			Host:     p.Host,
+			Port:     p.Port,
+			Username: p.Username,
+			Password: p.Password,
+		}
+	}
+
+	// Trust-Tunnel 特有字段
+	if p.Type == "trust-tunnel" {
+		cfg.TrustTunnelOpts = &TrustTunnelOpts{
+			Mode:  p.Mode,
+			Host:  p.Host,
+			Path:  p.Path,
+			Token: p.Token,
+		}
+	}
+
+	// Sudoku 特有字段
+	if p.Type == "sudoku" {
+		cfg.SudokuOpts = &SudokuOpts{
+			Key: p.Key,
+			IV:  p.IV,
+		}
+	}
+
+	// AmneziaWG 特有字段
+	if p.Type == "amneziawg" {
+		cfg.AmneziaWGOpts = &AmneziaWGOpts{
+			Jc:   p.Jc,
+			Jmin: p.Jmin,
+			Jmax: p.Jmax,
+			S1:   p.S1,
+			S2:   p.S2,
+			H1:   p.H1,
+			H2:   p.H2,
+			H3:   p.H3,
+			H4:   p.H4,
+		}
+	}
+
+	// Sing-Mux 特有字段
+	if p.Type == "singmux" || p.SingMuxProtocol != "" {
+		cfg.SingMuxOpts = &SingMuxOpts{
+			Protocol:       p.SingMuxProtocol,
+			MaxConnections: p.MaxConnections,
+			MinStreams:      p.MinStreams,
+			MaxStreams:      p.MaxStreams,
+			Statistic:      p.Statistic,
+			Padding:        p.Padding,
+			BrutalUp:       p.BrutalUp,
+			BrutalDown:     p.BrutalDown,
+		}
+	}
+
+	// MPTCP
+	cfg.MPTCP = p.MPTCP
+
 	return cfg
 }
 
@@ -344,6 +497,20 @@ func normalizeProxyType(t string) string {
 		return "snell"
 	case "ssh":
 		return "ssh"
+	case "mieru":
+		return "mieru"
+	case "anytls":
+		return "anytls"
+	case "masque":
+		return "masque"
+	case "trust-tunnel":
+		return "trust-tunnel"
+	case "sudoku":
+		return "sudoku"
+	case "amneziawg", "amnezia-wg", "amneziawireguard":
+		return "amneziawg"
+	case "singmux", "sing-mux":
+		return "singmux"
 	default:
 		return t
 	}
