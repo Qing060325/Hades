@@ -3,7 +3,7 @@ package version
 
 var (
 	// Version 版本号
-	Version = "v0.5.0"
+	Version = "v1.0.0"
 	// BuildTime 构建时间
 	BuildTime = "unknown"
 	// GoVersion Go版本
