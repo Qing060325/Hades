@@ -1,0 +1,83 @@
+# Hades v1.0.0 - OpenWrt 默认配置
+# 编辑此文件添加代理节点和规则
+
+# ========== 基础配置 ==========
+mixed-port: 7890
+allow-lan: true
+bind-address: "*"
+mode: rule
+log-level: info
+ipv6: false
+
+# ========== 外部控制 ==========
+external-controller: 0.0.0.0:9090
+secret: ""
+
+# ========== DNS 配置 ==========
+dns:
+  enable: true
+  listen: 0.0.0.0:1053
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - '*.lan'
+    - localhost.ptlogin2.qq.com
+  default-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  nameserver:
+    - https://dns.alidns.com/dns-query
+    - https://doh.pub/dns-query
+  fallback:
+    - tls://8.8.4.4
+    - tls://1.1.1.1
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+
+# ========== 嗅探配置 ==========
+sniffer:
+  enable: true
+  override-destination: true
+  force-dns-mapping: true
+  parse-pure-ip: true
+  sniff:
+    HTTP:
+      ports: [80, 8080-8880]
+    TLS:
+      ports: [443, 8443]
+    QUIC:
+      ports: [443, 8443]
+
+# ========== 代理节点 ==========
+# 在此添加你的代理节点
+proxies: []
+
+# ========== 代理组 ==========
+proxy-groups:
+  - name: "Proxy"
+    type: select
+    proxies:
+      - DIRECT
+  - name: "Domestic"
+    type: select
+    proxies:
+      - DIRECT
+      - Proxy
+
+# ========== 规则 ==========
+rules:
+  # 国内直连
+  - DOMAIN-SUFFIX,cn,Domestic
+  - DOMAIN-KEYWORD,baidu,Domestic
+  - DOMAIN-KEYWORD,taobao,Domestic
+  - DOMAIN-KEYWORD,alipay,Domestic
+  - DOMAIN-KEYWORD,tmall,Domestic
+  - DOMAIN-KEYWORD,jd,Domestic
+  - DOMAIN-KEYWORD,bilibili,Domestic
+  - DOMAIN-KEYWORD,qq,Domestic
+  - DOMAIN-KEYWORD,weixin,Domestic
+  - DOMAIN-KEYWORD,wechat,Domestic
+  - GEOIP,CN,Domestic
+  # 默认代理
+  - MATCH,Proxy

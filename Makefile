@@ -26,6 +26,13 @@ BINARY_DARWIN_AMD64 := $(BIN_DIR)/$(BINARY_NAME)-darwin-amd64
 BINARY_DARWIN_ARM64 := $(BIN_DIR)/$(BINARY_NAME)-darwin-arm64
 BINARY_WINDOWS_AMD64 := $(BIN_DIR)/$(BINARY_NAME)-windows-amd64.exe
 
+# OpenWrt 目标
+BINARY_MIPS := $(BIN_DIR)/$(BINARY_NAME)-linux-mips
+BINARY_MIPSLE := $(BIN_DIR)/$(BINARY_NAME)-linux-mipsle
+BINARY_MIPS64LE := $(BIN_DIR)/$(BINARY_NAME)-linux-mips64le
+BINARY_ARMV7 := $(BIN_DIR)/$(BINARY_NAME)-linux-armv7
+BINARY_ARM64 := $(BIN_DIR)/$(BINARY_NAME)-linux-arm64
+
 .PHONY: all build clean test deps cross-compile
 
 all: deps build
@@ -46,6 +53,34 @@ cross-compile:
 	GOOS=darwin GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_DARWIN_ARM64) $(MAIN_SRC)
 	GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_WINDOWS_AMD64) $(MAIN_SRC)
 	@echo "Cross compilation complete!"
+
+## OpenWrt 交叉编译（所有常见架构）
+openwrt:
+	@echo "Cross compiling for OpenWrt..."
+	@mkdir -p $(BIN_DIR)
+	GOOS=linux GOARCH=mips GOMIPS=softfloat $(GOBUILD) $(LDFLAGS) -o $(BINARY_MIPS) $(MAIN_SRC)
+	GOOS=linux GOARCH=mipsle GOMIPS=softfloat $(GOBUILD) $(LDFLAGS) -o $(BINARY_MIPSLE) $(MAIN_SRC)
+	GOOS=linux GOARCH=mips64le $(GOBUILD) $(LDFLAGS) -o $(BINARY_MIPS64LE) $(MAIN_SRC)
+	GOOS=linux GOARCH=arm GOARM=7 $(GOBUILD) $(LDFLAGS) -o $(BINARY_ARMV7) $(MAIN_SRC)
+	GOOS=linux GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_ARM64) $(MAIN_SRC)
+	@echo "OpenWrt compilation complete!"
+	@ls -lh $(BIN_DIR)/$(BINARY_NAME)-linux-mips*
+
+## OpenWrt 单架构编译
+openwrt-mips:
+	@mkdir -p $(BIN_DIR)
+	GOOS=linux GOARCH=mips GOMIPS=softfloat $(GOBUILD) $(LDFLAGS) -o $(BINARY_MIPS) $(MAIN_SRC)
+	@echo "Built: $(BINARY_MIPS)"
+
+openwrt-mipsle:
+	@mkdir -p $(BIN_DIR)
+	GOOS=linux GOARCH=mipsle GOMIPS=softfloat $(GOBUILD) $(LDFLAGS) -o $(BINARY_MIPSLE) $(MAIN_SRC)
+	@echo "Built: $(BINARY_MIPSLE)"
+
+openwrt-arm64:
+	@mkdir -p $(BIN_DIR)
+	GOOS=linux GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_ARM64) $(MAIN_SRC)
+	@echo "Built: $(BINARY_ARM64)"
 
 ## 运行测试
 test:
@@ -84,11 +119,15 @@ run: build
 ## 帮助
 help:
 	@echo "可用目标:"
-	@echo "  make build        - 构建当前平台"
-	@echo "  make cross-compile - 跨平台编译"
-	@echo "  make test         - 运行测试"
-	@echo "  make bench        - 性能测试"
-	@echo "  make deps         - 安装依赖"
-	@echo "  make clean        - 清理构建产物"
-	@echo "  make lint         - 代码检查"
-	@echo "  make run          - 构建并运行"
+	@echo "  make build          - 构建当前平台"
+	@echo "  make cross-compile  - 跨平台编译 (linux/mac/windows amd64+arm64)"
+	@echo "  make openwrt        - OpenWrt 全架构编译 (mips/mipsle/mips64le/armv7/arm64)"
+	@echo "  make openwrt-mips   - OpenWrt MIPS 编译"
+	@echo "  make openwrt-mipsle - OpenWrt MIPSLE 编译"
+	@echo "  make openwrt-arm64  - OpenWrt ARM64 编译"
+	@echo "  make test           - 运行测试"
+	@echo "  make bench          - 性能测试"
+	@echo "  make deps           - 安装依赖"
+	@echo "  make clean          - 清理构建产物"
+	@echo "  make lint           - 代码检查"
+	@echo "  make run            - 构建并运行"

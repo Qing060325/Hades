@@ -1,0 +1,21 @@
+# Hades proxy kernel - UCI configuration
+# /etc/config/hades
+
+config hades 'config'
+	# 是否启用 Hades
+	option enable '1'
+
+	# 配置文件路径
+	option config_path '/etc/hades/config.yaml'
+
+	# API 监听地址 (留空则不启用)
+	option api_listen '127.0.0.1:9090'
+
+	# API 密钥
+	option api_secret ''
+
+	# 日志级别: silent/error/warning/info/debug
+	option log_level 'info'
+
+	# 开机自启
+	option autostart '1'
