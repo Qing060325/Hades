@@ -89,7 +89,35 @@ docker run -d \
   ghcr.io/qing060325/hades:latest
 ```
 
-### 方式三：手动安装
+### 方式三：OpenWrt 路由器
+
+```bash
+# 一键安装（自动检测架构）
+curl -fsSL https://raw.githubusercontent.com/Qing060325/Hades/main/openwrt/install.sh | sh
+
+# 或手动安装
+wget https://raw.githubusercontent.com/Qing060325/Hades/main/openwrt/install.sh
+chmod +x install.sh
+./install.sh
+
+# 服务管理
+/etc/init.d/hades start      # 启动
+/etc/init.d/hades stop       # 停止
+/etc/init.d/hades restart    # 重启
+/etc/init.d/hades status     # 状态
+
+# UCI 配置管理
+uci show hades                          # 查看配置
+uci set hades.config.log_level='debug'  # 修改配置
+uci commit hades                        # 保存
+
+# 编辑代理配置
+vi /etc/hades/config.yaml
+```
+
+> 支持架构：mips / mipsle / mips64le / armv7 / arm64
+
+### 方式四：手动安装
 
 ```bash
 # 下载最新版本
