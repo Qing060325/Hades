@@ -13,6 +13,9 @@ type PrometheusCollector struct {
 	downloadBytes   *prometheus.Desc
 	activeConns     *prometheus.Desc
 	totalConns      *prometheus.Desc
+	proxyUpload     *prometheus.Desc
+	proxyDownload   *prometheus.Desc
+	proxyConns      *prometheus.Desc
 }
 
 // NewPrometheusCollector 创建 Prometheus 收集器
@@ -41,6 +44,21 @@ func NewPrometheusCollector(m *Manager) *PrometheusCollector {
 			"Total number of connections since startup",
 			nil, nil,
 		),
+		proxyUpload: prometheus.NewDesc(
+			prometheus.BuildFQName("", subsystem, "proxy_upload_bytes_total"),
+			"Per-proxy upload traffic in bytes",
+			[]string{"proxy"}, nil,
+		),
+		proxyDownload: prometheus.NewDesc(
+			prometheus.BuildFQName("", subsystem, "proxy_download_bytes_total"),
+			"Per-proxy download traffic in bytes",
+			[]string{"proxy"}, nil,
+		),
+		proxyConns: prometheus.NewDesc(
+			prometheus.BuildFQName("", subsystem, "proxy_connections"),
+			"Per-proxy active connections",
+			[]string{"proxy"}, nil,
+		),
 	}
 }
 
@@ -50,6 +68,9 @@ func (c *PrometheusCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.downloadBytes
 	ch <- c.activeConns
 	ch <- c.totalConns
+	ch <- c.proxyUpload
+	ch <- c.proxyDownload
+	ch <- c.proxyConns
 }
 
 // Collect 实现 prometheus.Collector 接口
@@ -68,4 +89,18 @@ func (c *PrometheusCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(
 		c.totalConns, prometheus.CounterValue, float64(c.manager.TotalConnections()),
 	)
+
+	// 每代理统计
+	allProxyStats := c.manager.AllProxyStats()
+	for name, ps := range allProxyStats {
+		ch <- prometheus.MustNewConstMetric(
+			c.proxyUpload, prometheus.CounterValue, float64(ps.Upload), name,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.proxyDownload, prometheus.CounterValue, float64(ps.Download), name,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.proxyConns, prometheus.GaugeValue, float64(ps.Connections), name,
+		)
+	}
 }

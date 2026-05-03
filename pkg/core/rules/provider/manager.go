@@ -123,3 +123,14 @@ func (m *Manager) StopAll() {
 		p.Stop()
 	}
 }
+
+// StartAll 启动所有 Provider 的自动更新
+func (m *Manager) StartAll() {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, p := range m.providers {
+		if p.Type == ProviderHTTP && p.Interval > 0 {
+			go p.AutoUpdate(m.dataDir)
+		}
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -58,22 +59,45 @@ func NewClient(cfg *config.DNSConfig) (*Client, error) {
 	return c, nil
 }
 
-// Listen 启动DNS服务
+// Listen 启动DNS服务 (同时监听 UDP 和 TCP)
 func (c *Client) Listen(ctx context.Context, addr string) error {
+	errCh := make(chan error, 2)
+
+	// 启动 UDP 监听
+	go func() {
+		errCh <- c.listenUDP(ctx, addr)
+	}()
+
+	// 启动 TCP 监听
+	go func() {
+		errCh <- c.listenTCP(ctx, addr)
+	}()
+
+	// 等待任一出错或 context 取消
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		return nil
+	}
+}
+
+// listenUDP 监听 UDP DNS 查询
+func (c *Client) listenUDP(ctx context.Context, addr string) error {
 	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve udp addr: %w", err)
 	}
 
 	conn, err := net.ListenUDP("udp", udpAddr)
 	if err != nil {
-		return err
+		return fmt.Errorf("listen udp: %w", err)
 	}
 	defer conn.Close()
 
-	log.Info().Str("addr", addr).Msg("DNS服务已启动")
+	log.Info().Str("addr", addr).Str("proto", "udp").Msg("DNS服务已启动")
 
-	buf := make([]byte, 512)
+	buf := make([]byte, 4096) // EDNS0 支持更大的包
 	for {
 		select {
 		case <-ctx.Done():
@@ -81,80 +105,141 @@ func (c *Client) Listen(ctx context.Context, addr string) error {
 		default:
 			n, remoteAddr, err := conn.ReadFromUDP(buf)
 			if err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
 				continue
 			}
 
-			go c.handleDNSQuery(conn, remoteAddr, buf[:n])
+			go c.handleDNSQueryUDP(conn, remoteAddr, buf[:n])
 		}
 	}
 }
 
-// handleDNSQuery 处理DNS查询
-func (c *Client) handleDNSQuery(conn *net.UDPConn, remoteAddr *net.UDPAddr, query []byte) {
-	// 1. 解析 DNS 查询报文
-	if len(query) < 12 {
+// listenTCP 监听 TCP DNS 查询
+func (c *Client) listenTCP(ctx context.Context, addr string) error {
+	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("resolve tcp addr: %w", err)
+	}
+
+	listener, err := net.ListenTCP("tcp", tcpAddr)
+	if err != nil {
+		return fmt.Errorf("listen tcp: %w", err)
+	}
+	defer listener.Close()
+
+	log.Info().Str("addr", addr).Str("proto", "tcp").Msg("DNS TCP服务已启动")
+
+	go func() {
+		<-ctx.Done()
+		listener.Close()
+	}()
+
+	for {
+		conn, err := listener.AcceptTCP()
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			continue
+		}
+
+		go c.handleDNSConnTCP(conn)
+	}
+}
+
+// handleDNSConnTCP 处理 TCP DNS 连接
+func (c *Client) handleDNSConnTCP(conn *net.TCPConn) {
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(10 * time.Second))
+
+	// TCP DNS 使用 2 字节长度前缀 (RFC 1035 Section 4.2.2)
+	lenBuf := make([]byte, 2)
+	if _, err := conn.Read(lenBuf); err != nil {
 		return
 	}
 
-	// DNS Header: ID(2) + Flags(2) + QDCOUNT(2) + ANCOUNT(2) + NSCOUNT(2) + ARCOUNT(2)
+	queryLen := binary.BigEndian.Uint16(lenBuf)
+	if queryLen == 0 || queryLen > 4096 {
+		return
+	}
+
+	query := make([]byte, queryLen)
+	if _, err := conn.Read(query); err != nil {
+		return
+	}
+
+	// 处理查询
+	response := c.processQuery(query)
+	if response == nil {
+		return
+	}
+
+	// TCP 响应也需要长度前缀
+	respLen := make([]byte, 2)
+	binary.BigEndian.PutUint16(respLen, uint16(len(response)))
+	conn.Write(append(respLen, response...))
+}
+
+// handleDNSQueryUDP 处理 UDP DNS 查询
+func (c *Client) handleDNSQueryUDP(conn *net.UDPConn, remoteAddr *net.UDPAddr, query []byte) {
+	response := c.processQuery(query)
+	if response != nil {
+		conn.WriteToUDP(response, remoteAddr)
+	}
+}
+
+// processQuery 处理 DNS 查询并返回响应
+func (c *Client) processQuery(query []byte) []byte {
+	if len(query) < 12 {
+		return nil
+	}
+
 	queryID := binary.BigEndian.Uint16(query[0:2])
 	qdCount := binary.BigEndian.Uint16(query[4:6])
-
 	if qdCount == 0 {
-		return
+		return nil
 	}
 
 	// 解析 Question Section
 	offset := 12
 	var qname string
 	var qtype uint16
-	var qclass uint16
 
 	for i := 0; i < int(qdCount); i++ {
 		name, newOffset, err := parseDNSName(query, offset)
 		if err != nil || newOffset+4 > len(query) {
-			return
+			return nil
 		}
 		qname = name
 		qtype = binary.BigEndian.Uint16(query[newOffset : newOffset+2])
-		qclass = binary.BigEndian.Uint16(query[newOffset+2 : newOffset+4])
 		offset = newOffset + 4
 	}
 
-	_ = qclass // 通常为 IN (1)
-
-	// 2. 检查缓存
+	// 检查缓存
 	if answers, ok := c.cache.Get(qname); ok && len(answers) > 0 {
-		response := buildDNSResponse(queryID, query, answers, qtype)
-		conn.WriteToUDP(response, remoteAddr)
-		return
+		return buildDNSResponse(queryID, query, answers, qtype)
 	}
 
-	// 3. Fake-IP 模式
-	if c.fakeIPPool != nil && qtype == 1 { // A 记录
+	// Fake-IP 模式
+	if c.fakeIPPool != nil && qtype == 1 {
 		fakeIP := c.fakeIPPool.Get(qname)
 		if fakeIP != nil {
-			response := buildDNSResponse(queryID, query, []net.IP{fakeIP}, qtype)
-			conn.WriteToUDP(response, remoteAddr)
-			return
+			return buildDNSResponse(queryID, query, []net.IP{fakeIP}, qtype)
 		}
 	}
 
-	// 4. 转发到上游 DNS
+	// 转发到上游 DNS
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	ips, err := c.Resolve(ctx, qname)
 	if err != nil || len(ips) == 0 {
-		// 返回 SERVFAIL
-		response := buildDNSErrorResponse(queryID, query, 2) // RCODE=2 (SERVFAIL)
-		conn.WriteToUDP(response, remoteAddr)
-		return
+		return buildDNSErrorResponse(queryID, query, 2)
 	}
 
-	// 5. 返回解析结果
-	response := buildDNSResponse(queryID, query, ips, qtype)
-	conn.WriteToUDP(response, remoteAddr)
+	return buildDNSResponse(queryID, query, ips, qtype)
 }
 
 // parseDNSName 解析 DNS 域名（支持指针压缩）
@@ -513,16 +598,71 @@ func (p *FakeIPPool) Lookup(ip string) string {
 	return p.ipToHost[ip]
 }
 
-// Resolver 实现 (占位)
-type resolver struct {
+// udpResolver 标准 UDP DNS 解析器
+type udpResolver struct {
 	addr string
 }
 
-func NewResolver(addr string) (Resolver, error) {
-	return &resolver{addr: addr}, nil
+func newUDPResolver(addr string) *udpResolver {
+	if !strings.Contains(addr, ":") {
+		addr = addr + ":53"
+	}
+	return &udpResolver{addr: addr}
 }
 
-func (r *resolver) Resolve(ctx context.Context, host string) ([]net.IP, error) {
-	// TODO: 实现完整的DNS解析
+func (r *udpResolver) Resolve(ctx context.Context, host string) ([]net.IP, error) {
+	resolver := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			d := net.Dialer{Timeout: 5 * time.Second}
+			return d.DialContext(ctx, "udp", r.addr)
+		},
+	}
+	addrs, err := resolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	ips := make([]net.IP, len(addrs))
+	for i, a := range addrs {
+		ips[i] = a.IP
+	}
+	return ips, nil
+}
+
+// quicResolver DNS-over-QUIC 解析器 (stub)
+type quicResolver struct {
+	server string
+}
+
+func newQUICResolver(server string) *quicResolver {
+	addr := strings.TrimPrefix(server, "quic://")
+	if !strings.Contains(addr, ":") {
+		addr = addr + ":853"
+	}
+	return &quicResolver{server: addr}
+}
+
+func (r *quicResolver) Resolve(ctx context.Context, host string) ([]net.IP, error) {
+	// DoQ stub - 回退到标准 DNS
+	// TODO: 实现 DNS-over-QUIC (RFC 9250)
 	return net.LookupIP(host)
+}
+
+// NewResolver 根据地址前缀创建对应协议的解析器
+// - "https://" 前缀 → DoH 解析器
+// - "tls://" 前缀 → DoT 解析器
+// - "quic://" 前缀 → DoQ 解析器 (stub)
+// - 纯 IP 地址 → 标准 UDP DNS 解析器
+func NewResolver(addr string) (Resolver, error) {
+	switch {
+	case strings.HasPrefix(addr, "https://"):
+		return NewDoHResolver(addr), nil
+	case strings.HasPrefix(addr, "tls://"):
+		return NewDoTResolver(addr), nil
+	case strings.HasPrefix(addr, "quic://"):
+		return newQUICResolver(addr), nil
+	default:
+		// 纯 IP 或 host:port → UDP DNS
+		return newUDPResolver(addr), nil
+	}
 }

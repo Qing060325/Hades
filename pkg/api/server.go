@@ -14,10 +14,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Qing060325/Hades/internal/config"
 	"github.com/Qing060325/Hades/internal/version"
 	"github.com/Qing060325/Hades/pkg/core/adapter"
 	"github.com/Qing060325/Hades/pkg/core/group"
 	"github.com/Qing060325/Hades/pkg/core/rules"
+	"github.com/Qing060325/Hades/pkg/dns"
 	"github.com/Qing060325/Hades/pkg/stats"
 	"github.com/Qing060325/Hades/pkg/subscription"
 	"github.com/prometheus/client_golang/prometheus"
@@ -43,6 +45,18 @@ type Server struct {
 
 	// 规则集提供者管理器
 	providerMgr RuleProviderManager
+
+	// 连接跟踪器
+	connTracker *stats.ConnectionTracker
+
+	// 日志缓冲区
+	logBuffer *LogBuffer
+
+	// DNS 解析器
+	dnsResolver *dns.Resolver
+
+	// 当前配置
+	currentConfig *config.Config
 }
 
 // RuleProviderManager 规则集提供者管理器接口
@@ -102,6 +116,26 @@ func (s *Server) SetProviderManager(mgr RuleProviderManager) {
 	s.providerMgr = mgr
 }
 
+// SetConnectionTracker 设置连接跟踪器
+func (s *Server) SetConnectionTracker(tracker *stats.ConnectionTracker) {
+	s.connTracker = tracker
+}
+
+// SetLogBuffer 设置日志缓冲区
+func (s *Server) SetLogBuffer(lb *LogBuffer) {
+	s.logBuffer = lb
+}
+
+// SetDNSResolver 设置 DNS 解析器
+func (s *Server) SetDNSResolver(resolver *dns.Resolver) {
+	s.dnsResolver = resolver
+}
+
+// SetConfig 设置当前配置
+func (s *Server) SetConfig(cfg *config.Config) {
+	s.currentConfig = cfg
+}
+
 // ListenAndServe 启动 API 服务器
 func (s *Server) ListenAndServe() error {
 	mux := http.NewServeMux()
@@ -123,9 +157,9 @@ func (s *Server) ListenAndServe() error {
 	// 规则
 	mux.HandleFunc("/rules", s.handleRules)
 
-	// 连接
+	// 连接（支持 /connections, /connections/{id}, /connections/close）
+	mux.HandleFunc("/connections/", s.handleConnectionsPath)
 	mux.HandleFunc("/connections", s.handleConnections)
-	mux.HandleFunc("/connections/close", s.closeAllConnections)
 
 	// 流量统计
 	mux.HandleFunc("/traffic", s.handleTraffic)
@@ -229,13 +263,40 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 // handleConfig 配置信息
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		s.writeJSON(w, http.StatusOK, map[string]interface{}{
-			"mode":     "rule",
-			"logLevel": "info",
-			"tun": map[string]interface{}{
-				"enable": false,
-			},
-		})
+		if s.currentConfig != nil {
+			cfg := s.currentConfig
+			s.writeJSON(w, http.StatusOK, map[string]interface{}{
+				"port":      cfg.Port,
+				"socksPort": cfg.SocksPort,
+				"mixedPort": cfg.MixedPort,
+				"allowLan":  cfg.AllowLan,
+				"bindAddress": cfg.BindAddress,
+				"mode":      cfg.Mode,
+				"logLevel":  cfg.LogLevel,
+				"ipv6":      cfg.IPv6,
+				"tun": map[string]interface{}{
+					"enable":    cfg.Tun.Enable,
+					"stack":     cfg.Tun.Stack,
+					"mtu":       cfg.Tun.MTU,
+					"autoRoute": cfg.Tun.AutoRoute,
+				},
+				"dns": map[string]interface{}{
+					"enable":       cfg.DNS.Enable,
+					"enhancedMode": cfg.DNS.EnhancedMode,
+					"fakeIPRange":  cfg.DNS.FakeIPRange,
+					"nameserver":   cfg.DNS.Nameserver,
+					"fallback":     cfg.DNS.Fallback,
+				},
+			})
+		} else {
+			s.writeJSON(w, http.StatusOK, map[string]interface{}{
+				"mode":     "rule",
+				"logLevel": "info",
+				"tun": map[string]interface{}{
+					"enable": false,
+				},
+			})
+		}
 		return
 	}
 
@@ -350,8 +411,98 @@ func (s *Server) handleProxies(w http.ResponseWriter, r *http.Request) {
 
 // handleProxy 代理详情/切换
 func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
-	// TODO: 实现代理详情和切换
-	w.WriteHeader(http.StatusNotImplemented)
+	name := strings.TrimPrefix(r.URL.Path, "/proxies/")
+	name = strings.TrimSuffix(name, "/")
+	if name == "" {
+		s.writeError(w, http.StatusBadRequest, "proxy name required")
+		return
+	}
+
+	if s.adapterMgr == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "adapter manager not available")
+		return
+	}
+
+	adapt := s.adapterMgr.Get(name)
+	if adapt == nil {
+		s.writeError(w, http.StatusNotFound, "proxy not found")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		result := map[string]interface{}{
+			"name":      adapt.Name(),
+			"type":      string(adapt.Type()),
+			"addr":      adapt.Addr(),
+			"udp":       adapt.SupportUDP(),
+			"alive":     true,
+			"delay":     0,
+		}
+
+		// 尝试延迟测试
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		delay, err := adapt.URLTest(ctx, "https://www.gstatic.com/generate_204")
+		if err == nil {
+			result["delay"] = delay.Milliseconds()
+			result["alive"] = true
+		} else {
+			result["alive"] = false
+		}
+
+		s.writeJSON(w, http.StatusOK, result)
+
+	case http.MethodPut:
+		// 切换代理组中的选择
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			s.writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+
+		if s.groupMgr == nil {
+			s.writeError(w, http.StatusServiceUnavailable, "group manager not available")
+			return
+		}
+
+		g := s.groupMgr.Get(name)
+		if g == nil {
+			s.writeError(w, http.StatusNotFound, "proxy group not found")
+			return
+		}
+
+		// 查找目标代理在组中的索引
+		proxies := g.Proxies()
+		targetIndex := -1
+		for i, p := range proxies {
+			if p.Name() == req.Name {
+				targetIndex = i
+				break
+			}
+		}
+
+		if targetIndex < 0 {
+			s.writeError(w, http.StatusBadRequest, "target proxy not found in group")
+			return
+		}
+
+		// 仅对 select 类型的组执行切换
+		if sg, ok := g.(*group.SelectGroup); ok {
+			sg.SetSelected(targetIndex)
+			s.writeJSON(w, http.StatusOK, map[string]interface{}{
+				"name":     name,
+				"selected": req.Name,
+			})
+		} else {
+			s.writeError(w, http.StatusBadRequest, "only select groups support switching")
+		}
+
+	default:
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }
 
 // handleGroups 代理组列表
@@ -383,41 +534,192 @@ func (s *Server) handleGroups(w http.ResponseWriter, r *http.Request) {
 
 // handleGroup 代理组操作
 func (s *Server) handleGroup(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodPut {
-		// 切换代理组选择
-		w.WriteHeader(http.StatusOK)
+	name := strings.TrimPrefix(r.URL.Path, "/groups/")
+	name = strings.TrimSuffix(name, "/")
+	if name == "" {
+		s.writeError(w, http.StatusBadRequest, "group name required")
 		return
 	}
-	w.WriteHeader(http.StatusMethodNotAllowed)
+
+	if s.groupMgr == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "group manager not available")
+		return
+	}
+
+	g := s.groupMgr.Get(name)
+	if g == nil {
+		s.writeError(w, http.StatusNotFound, "group not found")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		proxies := make([]map[string]interface{}, 0)
+		for _, p := range g.Proxies() {
+			proxies = append(proxies, map[string]interface{}{
+				"name": p.Name(),
+				"type": string(p.Type()),
+			})
+		}
+		s.writeJSON(w, http.StatusOK, map[string]interface{}{
+			"name":    g.Name(),
+			"type":    string(g.Type()),
+			"proxies": proxies,
+		})
+
+	case http.MethodPut:
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			s.writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+
+		proxies := g.Proxies()
+		targetIndex := -1
+		for i, p := range proxies {
+			if p.Name() == req.Name {
+				targetIndex = i
+				break
+			}
+		}
+
+		if targetIndex < 0 {
+			s.writeError(w, http.StatusBadRequest, "target proxy not found in group")
+			return
+		}
+
+		if sg, ok := g.(*group.SelectGroup); ok {
+			sg.SetSelected(targetIndex)
+			s.writeJSON(w, http.StatusOK, map[string]interface{}{
+				"name":     name,
+				"selected": req.Name,
+			})
+		} else {
+			s.writeError(w, http.StatusBadRequest, "only select groups support switching")
+		}
+
+	default:
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }
 
 // handleRules 规则列表
 func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
-	s.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"rules": []interface{}{},
-	})
-}
-
-// handleConnections 连接列表
-func (s *Server) handleConnections(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		s.writeJSON(w, http.StatusOK, map[string]interface{}{
-			"connections":    []interface{}{},
-			"downloadTotal":  0,
-			"uploadTotal":    0,
-		})
+	if s.ruleEngine == nil {
+		s.writeJSON(w, http.StatusOK, map[string]interface{}{"rules": []interface{}{}})
 		return
 	}
 
-	if r.Method == http.MethodDelete {
+	rules := s.ruleEngine.Rules()
+	result := make([]map[string]interface{}, 0, len(rules))
+	for i, rule := range rules {
+		result = append(result, map[string]interface{}{
+			"type":    string(rule.Type()),
+			"payload": rule.Payload(),
+			"adapter": rule.Adapter(),
+			"index":   i,
+		})
+	}
+	s.writeJSON(w, http.StatusOK, map[string]interface{}{"rules": result})
+}
+
+// handleConnections 连接列表/关闭
+func (s *Server) handleConnections(w http.ResponseWriter, r *http.Request) {
+	if s.connTracker == nil {
+		if r.Method == http.MethodGet {
+			s.writeJSON(w, http.StatusOK, map[string]interface{}{
+				"connections":   []interface{}{},
+				"downloadTotal": 0,
+				"uploadTotal":   0,
+			})
+			return
+		}
+		s.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		conns := s.connTracker.All()
+		s.writeJSON(w, http.StatusOK, map[string]interface{}{
+			"connections":   conns,
+			"downloadTotal": s.connTracker.TotalDownload(),
+			"uploadTotal":   s.connTracker.TotalUpload(),
+		})
+
+	case http.MethodDelete:
+		// DELETE /connections/{id} 关闭指定连接
+		path := strings.TrimPrefix(r.URL.Path, "/connections")
+		path = strings.TrimPrefix(path, "/")
+		if path != "" {
+			// 关闭指定连接
+			if s.connTracker.Close(path) {
+				s.writeJSON(w, http.StatusOK, map[string]string{"status": "connection closed"})
+			} else {
+				s.writeError(w, http.StatusNotFound, "connection not found")
+			}
+		} else {
+			// 关闭所有连接
+			s.connTracker.CloseAll()
+			s.writeJSON(w, http.StatusOK, map[string]string{"status": "all connections closed"})
+		}
+
+	default:
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// closeAllConnections 关闭所有连接（兼容旧路由）
+func (s *Server) closeAllConnections(w http.ResponseWriter, r *http.Request) {
+	if s.connTracker != nil {
+		s.connTracker.CloseAll()
+	}
+	s.writeJSON(w, http.StatusOK, map[string]string{"status": "all connections closed"})
+}
+
+// handleConnectionsPath 处理 /connections/ 子路径
+func (s *Server) handleConnectionsPath(w http.ResponseWriter, r *http.Request) {
+	subPath := strings.TrimPrefix(r.URL.Path, "/connections/")
+	subPath = strings.TrimSuffix(subPath, "/")
+
+	// /connections/close - 关闭所有连接
+	if subPath == "close" {
 		s.closeAllConnections(w, r)
 		return
 	}
-}
 
-// closeAllConnections 关闭所有连接
-func (s *Server) closeAllConnections(w http.ResponseWriter, r *http.Request) {
-	s.writeJSON(w, http.StatusOK, map[string]string{"status": "all connections closed"})
+	// /connections/{id} - 操作指定连接
+	if subPath == "" {
+		s.handleConnections(w, r)
+		return
+	}
+
+	if s.connTracker == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "connection tracker not available")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		conn := s.connTracker.Get(subPath)
+		if conn == nil {
+			s.writeError(w, http.StatusNotFound, "connection not found")
+			return
+		}
+		s.writeJSON(w, http.StatusOK, conn)
+
+	case http.MethodDelete:
+		if s.connTracker.Close(subPath) {
+			s.writeJSON(w, http.StatusOK, map[string]string{"status": "connection closed"})
+		} else {
+			s.writeError(w, http.StatusNotFound, "connection not found")
+		}
+
+	default:
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }
 
 // handleTraffic 流量统计
@@ -438,19 +740,59 @@ func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDNSQuery(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("name")
 	if query == "" {
-		s.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing name parameter"})
+		s.writeError(w, http.StatusBadRequest, "missing name parameter")
 		return
+	}
+
+	if s.dnsResolver == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "dns resolver not available")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	ips, err := s.dnsResolver.Resolve(ctx, query)
+	if err != nil {
+		s.writeJSON(w, http.StatusOK, map[string]interface{}{
+			"name":  query,
+			"ips":   []string{},
+			"error": err.Error(),
+		})
+		return
+	}
+
+	ipStrs := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		ipStrs = append(ipStrs, ip.String())
 	}
 
 	s.writeJSON(w, http.StatusOK, map[string]interface{}{
 		"name":  query,
-		"ips":   []string{},
+		"ips":   ipStrs,
 		"error": nil,
 	})
 }
 
-// handleLogs 日志流
+// handleLogs 日志流（SSE）
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+	if s.logBuffer == nil {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprintf(w, "data: {\"type\":\"log\",\"payload\":\"log buffer not available\"}\n\n")
+		flusher.Flush()
+		return
+	}
+
+	// 支持 level 过滤
+	levelFilter := r.URL.Query().Get("level")
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -461,9 +803,40 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// SSE 格式
-	fmt.Fprintf(w, "data: {\"type\":\"log\",\"payload\":\"Hades started\"}\n\n")
+	// 先发送最近的历史日志
+	recent := s.logBuffer.Recent(50)
+	for _, entry := range recent {
+		if levelFilter != "" && entry.Type != levelFilter {
+			continue
+		}
+		data, _ := json.Marshal(entry)
+		fmt.Fprintf(w, "data: %s\n\n", data)
+	}
 	flusher.Flush()
+
+	// 订阅新日志
+	subID := fmt.Sprintf("sse-%d", time.Now().UnixNano())
+	ch, unsubscribe := s.logBuffer.Subscribe(subID, 100)
+	defer unsubscribe()
+
+	// 确保客户端断开时清理
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case entry, ok := <-ch:
+			if !ok {
+				return
+			}
+			if levelFilter != "" && entry.Type != levelFilter {
+				continue
+			}
+			data, _ := json.Marshal(entry)
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
 }
 
 // handlePing 健康检查

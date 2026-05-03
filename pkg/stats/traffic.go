@@ -16,6 +16,9 @@ type Manager struct {
 	// 连接统计
 	activeConnections int64
 	totalConnections  int64
+
+	// 每代理统计
+	proxyStats sync.Map // map[string]*ProxyStats
 }
 
 // Traffic 流量统计
@@ -171,4 +174,66 @@ func FormatBytes(bytes int64) string {
 	default:
 		return fmt.Sprintf("%d B", bytes)
 	}
+}
+
+// ProxyStats 单个代理的流量统计
+type ProxyStats struct {
+	Upload      int64 `json:"upload"`
+	Download    int64 `json:"download"`
+	Connections int64 `json:"connections"`
+}
+
+// AddProxyTraffic 增加指定代理的流量
+func (m *Manager) AddProxyTraffic(name string, up, down int) {
+	val, _ := m.proxyStats.LoadOrStore(name, &ProxyStats{})
+	ps := val.(*ProxyStats)
+	atomic.AddInt64(&ps.Upload, int64(up))
+	atomic.AddInt64(&ps.Download, int64(down))
+}
+
+// AddProxyConnection 增加指定代理的连接数
+func (m *Manager) AddProxyConnection(name string) {
+	val, _ := m.proxyStats.LoadOrStore(name, &ProxyStats{})
+	ps := val.(*ProxyStats)
+	atomic.AddInt64(&ps.Connections, 1)
+}
+
+// RemoveProxyConnection 减少指定代理的连接数
+func (m *Manager) RemoveProxyConnection(name string) {
+	val, ok := m.proxyStats.Load(name)
+	if !ok {
+		return
+	}
+	ps := val.(*ProxyStats)
+	atomic.AddInt64(&ps.Connections, -1)
+}
+
+// GetProxyStats 获取指定代理的统计
+func (m *Manager) GetProxyStats(name string) *ProxyStats {
+	val, ok := m.proxyStats.Load(name)
+	if !ok {
+		return &ProxyStats{}
+	}
+	ps := val.(*ProxyStats)
+	return &ProxyStats{
+		Upload:      atomic.LoadInt64(&ps.Upload),
+		Download:    atomic.LoadInt64(&ps.Download),
+		Connections: atomic.LoadInt64(&ps.Connections),
+	}
+}
+
+// AllProxyStats 获取所有代理的统计
+func (m *Manager) AllProxyStats() map[string]*ProxyStats {
+	result := make(map[string]*ProxyStats)
+	m.proxyStats.Range(func(key, value interface{}) bool {
+		name := key.(string)
+		ps := value.(*ProxyStats)
+		result[name] = &ProxyStats{
+			Upload:      atomic.LoadInt64(&ps.Upload),
+			Download:    atomic.LoadInt64(&ps.Download),
+			Connections: atomic.LoadInt64(&ps.Connections),
+		}
+		return true
+	})
+	return result
 }

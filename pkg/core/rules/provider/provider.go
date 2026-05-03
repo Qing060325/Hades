@@ -43,6 +43,7 @@ type Provider struct {
 	updatedAt time.Time
 	mu        sync.RWMutex
 	stopCh    chan struct{}
+	started   bool
 }
 
 // New 创建 Provider
@@ -173,6 +174,14 @@ func (p *Provider) parseRule(line string) rules.Rule {
 
 // AutoUpdate 自动更新
 func (p *Provider) AutoUpdate(dataDir string) {
+	p.mu.Lock()
+	if p.started {
+		p.mu.Unlock()
+		return
+	}
+	p.started = true
+	p.mu.Unlock()
+
 	ticker := time.NewTicker(time.Duration(p.Interval) * time.Second)
 	defer ticker.Stop()
 
@@ -188,5 +197,10 @@ func (p *Provider) AutoUpdate(dataDir string) {
 
 // Stop 停止
 func (p *Provider) Stop() {
-	close(p.stopCh)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.started {
+		p.started = false
+		close(p.stopCh)
+	}
 }

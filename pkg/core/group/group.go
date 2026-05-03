@@ -311,7 +311,7 @@ func (g *LoadBalanceGroup) Type() GroupType {
 	return GroupTypeLoadBalance
 }
 
-// Select 选择代理（轮询）
+// Select 选择代理（根据策略）
 func (g *LoadBalanceGroup) Select(metadata *adapter.Metadata) adapter.Adapter {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -320,8 +320,21 @@ func (g *LoadBalanceGroup) Select(metadata *adapter.Metadata) adapter.Adapter {
 		return nil
 	}
 
-	idx := g.index % uint64(len(g.proxies))
-	g.index++
+	switch g.strategy {
+	case BalanceConsistentHash:
+		return g.selectConsistentHash(metadata)
+	default: // round-robin
+		idx := g.index % uint64(len(g.proxies))
+		g.index++
+		return g.proxies[idx]
+	}
+}
+
+// selectConsistentHash 一致性哈希选择代理
+func (g *LoadBalanceGroup) selectConsistentHash(metadata *adapter.Metadata) adapter.Adapter {
+	key := fmt.Sprintf("%s:%d", metadata.Host, metadata.DstPort)
+	hash := fnv32(key)
+	idx := hash % uint32(len(g.proxies))
 	return g.proxies[idx]
 }
 
@@ -333,6 +346,88 @@ func (g *LoadBalanceGroup) HealthCheck() error {
 // Proxies 返回代理列表
 func (g *LoadBalanceGroup) Proxies() []adapter.Adapter {
 	return g.proxies
+}
+
+// RelayGroup 中继组 - 按顺序链式连接代理
+type RelayGroup struct {
+	name    string
+	proxies []adapter.Adapter
+	mu      sync.RWMutex
+}
+
+// NewRelayGroup 创建中继组
+func NewRelayGroup(name string, proxies []adapter.Adapter) *RelayGroup {
+	return &RelayGroup{
+		name:    name,
+		proxies: proxies,
+	}
+}
+
+// Name 返回名称
+func (g *RelayGroup) Name() string {
+	return g.name
+}
+
+// Type 返回类型
+func (g *RelayGroup) Type() GroupType {
+	return GroupTypeRelay
+}
+
+// Select 返回链式代理适配器
+// 中继组的 Select 返回第一个代理，由调用方按顺序链式连接
+func (g *RelayGroup) Select(metadata *adapter.Metadata) adapter.Adapter {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	if len(g.proxies) == 0 {
+		return nil
+	}
+
+	// 返回第一个代理；真正的链式连接由 RelayAdapter 或上层逻辑处理
+	return g.proxies[0]
+}
+
+// Chain 返回按顺序排列的代理链
+func (g *RelayGroup) Chain() []adapter.Adapter {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	result := make([]adapter.Adapter, len(g.proxies))
+	copy(result, g.proxies)
+	return result
+}
+
+// HealthCheck 检查链中所有代理的健康状态
+func (g *RelayGroup) HealthCheck() error {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	if len(g.proxies) == 0 {
+		return fmt.Errorf("中继组 %s 无可用代理", g.name)
+	}
+
+	for i, p := range g.proxies {
+		if p == nil {
+			return fmt.Errorf("中继组 %s 第 %d 个代理为 nil", g.name, i)
+		}
+	}
+
+	return nil
+}
+
+// Proxies 返回代理列表
+func (g *RelayGroup) Proxies() []adapter.Adapter {
+	return g.proxies
+}
+
+// fnv32 计算 FNV-1a 32位哈希
+func fnv32(key string) uint32 {
+	h := uint32(2166136261)
+	for i := 0; i < len(key); i++ {
+		h ^= uint32(key[i])
+		h *= 16777619
+	}
+	return h
 }
 
 // Manager 代理组管理器
@@ -372,6 +467,53 @@ func (m *Manager) All() map[string]Group {
 		result[k] = v
 	}
 	return result
+}
+
+// Remove 移除代理组
+func (m *Manager) Remove(name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.groups, name)
+}
+
+// Select 从指定组中选择代理
+func (m *Manager) Select(groupName string, metadata *adapter.Metadata) adapter.Adapter {
+	m.mu.RLock()
+	g, ok := m.groups[groupName]
+	m.mu.RUnlock()
+
+	if !ok {
+		return nil
+	}
+	return g.Select(metadata)
+}
+
+// HealthCheckAll 并发对所有代理组执行健康检查
+func (m *Manager) HealthCheckAll() map[string]error {
+	m.mu.RLock()
+	groups := make(map[string]Group, len(m.groups))
+	for k, v := range m.groups {
+		groups[k] = v
+	}
+	m.mu.RUnlock()
+
+	results := make(map[string]error, len(groups))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for name, g := range groups {
+		wg.Add(1)
+		go func(n string, gr Group) {
+			defer wg.Done()
+			err := gr.HealthCheck()
+			mu.Lock()
+			results[n] = err
+			mu.Unlock()
+		}(name, g)
+	}
+
+	wg.Wait()
+	return results
 }
 
 // ParseGroupConfig 解析代理组配置

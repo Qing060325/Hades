@@ -4,13 +4,19 @@ package listener
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"time"
 
 	"github.com/Qing060325/Hades/pkg/core/adapter"
 	"github.com/Qing060325/Hades/pkg/core/group"
+	"github.com/Qing060325/Hades/pkg/core/listener/redir"
+	"github.com/Qing060325/Hades/pkg/core/listener/tproxy"
 	"github.com/Qing060325/Hades/pkg/core/rules"
+	"github.com/Qing060325/Hades/pkg/core/tunnel"
+	"github.com/Qing060325/Hades/pkg/perf/pool"
+	"github.com/Qing060325/Hades/pkg/perf/zerocopy"
 	"github.com/rs/zerolog/log"
 )
 
@@ -26,9 +32,11 @@ type Manager struct {
 	adapterManager *adapter.Manager
 	ruleEngine     *rules.Engine
 	groupManager   *group.Manager
+	tunnel         *tunnel.Tunnel
 
-	listeners map[string]Listener
-	mu        sync.RWMutex
+	listeners    map[string]Listener
+	activeConns  int64 // 跨所有监听器的活跃连接数
+	mu           sync.RWMutex
 }
 
 // NewManager 创建监听器管理器
@@ -45,6 +53,11 @@ func NewManager(
 	}
 }
 
+// SetTunnel 设置 Tunnel（流量调度中枢）
+func (m *Manager) SetTunnel(t *tunnel.Tunnel) {
+	m.tunnel = t
+}
+
 // StartMixedListener 启动混合端口监听器
 func (m *Manager) StartMixedListener(ctx context.Context, addr string, allowLan bool) error {
 	m.mu.Lock()
@@ -55,6 +68,7 @@ func (m *Manager) StartMixedListener(ctx context.Context, addr string, allowLan 
 	}
 
 	listener := NewMixedListener(addr, allowLan, m.adapterManager, m.ruleEngine, m.groupManager)
+	listener.tunnel = m.tunnel
 	m.listeners[addr] = listener
 
 	go func() {
@@ -76,6 +90,7 @@ func (m *Manager) StartHTTPListener(ctx context.Context, addr string, allowLan b
 	}
 
 	listener := NewHTTPListener(addr, allowLan, m.adapterManager, m.ruleEngine, m.groupManager)
+	listener.tunnel = m.tunnel
 	m.listeners[addr] = listener
 
 	go func() {
@@ -97,6 +112,7 @@ func (m *Manager) StartSOCKSListener(ctx context.Context, addr string, allowLan 
 	}
 
 	listener := NewSOCKSListener(addr, allowLan, m.adapterManager, m.ruleEngine, m.groupManager)
+	listener.tunnel = m.tunnel
 	m.listeners[addr] = listener
 
 	go func() {
@@ -120,6 +136,11 @@ func (m *Manager) Close() {
 	}
 
 	m.listeners = make(map[string]Listener)
+
+	// 关闭 Tunnel
+	if m.tunnel != nil {
+		m.tunnel.Close()
+	}
 }
 
 // UpdateManagers 更新管理器引用（热重载时使用）
@@ -130,6 +151,99 @@ func (m *Manager) UpdateManagers(adapterMgr *adapter.Manager, ruleEngine *rules.
 	m.adapterManager = adapterMgr
 	m.ruleEngine = ruleEngine
 	m.groupManager = groupMgr
+
+	// 同步更新 Tunnel
+	if m.tunnel != nil {
+		m.tunnel.UpdateAdapterManager(adapterMgr)
+		m.tunnel.UpdateRuleEngine(ruleEngine)
+		m.tunnel.UpdateGroupManager(groupMgr)
+	}
+}
+
+// StartRedirListener 启动 iptables REDIRECT 透明代理监听器
+func (m *Manager) StartRedirListener(ctx context.Context, addr string, allowLan bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, ok := m.listeners[addr]; ok {
+		return fmt.Errorf("地址 %s 已被监听", addr)
+	}
+
+	l := redir.NewRedirListener(addr, allowLan, m.adapterManager, m.ruleEngine, m.groupManager)
+	m.listeners[addr] = l
+
+	go func() {
+		if err := l.Listen(ctx); err != nil {
+			log.Error().Err(err).Str("addr", addr).Msg("Redir 监听器异常")
+		}
+	}()
+
+	return nil
+}
+
+// StartTProxyListener 启动 TProxy 透明代理监听器
+func (m *Manager) StartTProxyListener(ctx context.Context, addr string, allowLan bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, ok := m.listeners[addr]; ok {
+		return fmt.Errorf("地址 %s 已被监听", addr)
+	}
+
+	l := tproxy.NewTProxyListener(addr, allowLan, m.adapterManager, m.ruleEngine, m.groupManager)
+	m.listeners[addr] = l
+
+	go func() {
+		if err := l.Listen(ctx); err != nil {
+			log.Error().Err(err).Str("addr", addr).Msg("TProxy 监听器异常")
+		}
+	}()
+
+	return nil
+}
+
+// ActiveConnections 返回所有监听器的活跃连接数
+func (m *Manager) ActiveConnections() int {
+	return int(m.activeConns)
+}
+
+// IncrActiveConns 增加活跃连接计数
+func (m *Manager) IncrActiveConns() {
+	m.mu.Lock()
+	m.activeConns++
+	m.mu.Unlock()
+}
+
+// DecrActiveConns 减少活跃连接计数
+func (m *Manager) DecrActiveConns() {
+	m.mu.Lock()
+	if m.activeConns > 0 {
+		m.activeConns--
+	}
+	m.mu.Unlock()
+}
+
+// Stats 返回所有监听器的统计信息
+func (m *Manager) Stats() map[string]interface{} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	listeners := make([]map[string]interface{}, 0, len(m.listeners))
+	for addr, l := range m.listeners {
+		listenerInfo := map[string]interface{}{
+			"addr": addr,
+		}
+		if l.Addr() != nil {
+			listenerInfo["local_addr"] = l.Addr().String()
+		}
+		listeners = append(listeners, listenerInfo)
+	}
+
+	return map[string]interface{}{
+		"count":            len(m.listeners),
+		"active_conns":     m.activeConns,
+		"listeners":        listeners,
+	}
 }
 
 // BaseListener 基础监听器
@@ -139,6 +253,7 @@ type BaseListener struct {
 	adapterMgr *adapter.Manager
 	ruleEngine *rules.Engine
 	groupMgr   *group.Manager
+	tunnel     *tunnel.Tunnel
 
 	listener net.Listener
 	closed   bool
@@ -224,7 +339,7 @@ func (l *BaseListener) Done() <-chan struct{} {
 	return l.shutdownCh
 }
 
-// SelectAdapter 选择适配器
+// SelectAdapter 选择适配器（回退路径，无 Tunnel 时使用）
 func (l *BaseListener) SelectAdapter(metadata *adapter.Metadata) adapter.Adapter {
 	if l.ruleEngine != nil {
 		if adaptName := l.ruleEngine.Match(metadata); adaptName != "" {
@@ -241,4 +356,68 @@ func (l *BaseListener) SelectAdapter(metadata *adapter.Metadata) adapter.Adapter
 	}
 
 	return l.adapterMgr.Get("DIRECT")
+}
+
+// DispatchTCP 通过 Tunnel 调度 TCP 连接
+// 如果 Tunnel 存在，走统一调度；否则回退到 SelectAdapter
+func (l *BaseListener) DispatchTCP(conn net.Conn, metadata *adapter.Metadata) {
+	if l.tunnel != nil {
+		l.tunnel.HandleTCP(conn, metadata)
+		return
+	}
+
+	// 回退：无 Tunnel 时的直接处理（兼容模式）
+	l.selectAndRelay(conn, metadata)
+}
+
+// selectAndRelay 无 Tunnel 时的回退路径
+func (l *BaseListener) selectAndRelay(conn net.Conn, metadata *adapter.Metadata) {
+	adapt := l.SelectAdapter(metadata)
+	if adapt == nil {
+		conn.Close()
+		return
+	}
+
+	backendConn, err := adapt.DialContext(context.Background(), metadata)
+	if err != nil {
+		log.Error().Err(err).Str("adapter", adapt.Name()).Msg("建立后端连接失败")
+		conn.Close()
+		return
+	}
+	defer backendConn.Close()
+	defer conn.Close()
+
+	// 双向转发
+	l.relay(conn, backendConn)
+}
+
+// relay 双向流量转发
+func (l *BaseListener) relay(left, right net.Conn) {
+	// 尝试 TCP 零拷贝
+	if lc, lok := left.(*net.TCPConn); lok {
+		if rc, rok := right.(*net.TCPConn); rok {
+			zerocopy.TCPRelay(lc, rc)
+			return
+		}
+	}
+
+	// 回退到缓冲拷贝
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		buf := pool.GetLarge()
+		defer pool.Put(buf)
+		io.CopyBuffer(left, right, buf)
+	}()
+
+	go func() {
+		defer wg.Done()
+		buf := pool.GetLarge()
+		defer pool.Put(buf)
+		io.CopyBuffer(right, left, buf)
+	}()
+
+	wg.Wait()
 }

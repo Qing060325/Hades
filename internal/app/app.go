@@ -27,10 +27,13 @@ import (
 	"github.com/Qing060325/Hades/pkg/core/dialer"
 	"github.com/Qing060325/Hades/pkg/core/dns"
 	"github.com/Qing060325/Hades/pkg/core/group"
+	dnsenhanced "github.com/Qing060325/Hades/pkg/dns"
 	"github.com/Qing060325/Hades/pkg/core/listener"
 	"github.com/Qing060325/Hades/pkg/core/listener/tun"
+	"github.com/Qing060325/Hades/pkg/core/proxyprovider"
 	"github.com/Qing060325/Hades/pkg/core/rules"
 	"github.com/Qing060325/Hades/pkg/core/rules/provider"
+	"github.com/Qing060325/Hades/pkg/component/geodata"
 	"github.com/Qing060325/Hades/pkg/ebpf"
 	"github.com/Qing060325/Hades/pkg/sniffer"
 	"github.com/Qing060325/Hades/pkg/stats"
@@ -56,6 +59,8 @@ type App struct {
 	sniffer         *sniffer.Sniffer
 	ebpfManager     *ebpf.Manager
 	providerMgr     *provider.Manager
+	connTracker     *stats.ConnectionTracker
+	proxyProviders  map[string]*proxyprovider.Provider
 }
 
 // New 创建应用实例
@@ -90,6 +95,12 @@ func (a *App) initComponents() error {
 	// 2. 初始化拨号器管理器
 	a.dialerManager = dialer.NewManager(a.cfg)
 
+	// 2.5 初始化代理提供者
+	a.proxyProviders = make(map[string]*proxyprovider.Provider)
+	if len(a.cfg.ProxyProviders) > 0 {
+		a.initProxyProviders()
+	}
+
 	// 3. 初始化 DNS 客户端
 	if a.cfg.DNS.Enable {
 		a.dnsClient, err = dns.NewClient(&a.cfg.DNS)
@@ -113,6 +124,9 @@ func (a *App) initComponents() error {
 	// 7. 初始化统计管理器
 	a.statsManager = stats.NewManager()
 
+	// 7.5 初始化连接跟踪器
+	a.connTracker = stats.NewConnectionTracker()
+
 	// 8. 初始化监听器管理器
 	a.listenerManager = listener.NewManager(a.adapterManager, a.ruleEngine, a.groupManager)
 
@@ -121,6 +135,23 @@ func (a *App) initComponents() error {
 		a.apiServer = api.NewServer(a.cfg.ExternalController, a.cfg.Secret)
 		a.apiServer.SetManagers(a.adapterManager, a.groupManager, a.ruleEngine, a.statsManager)
 		a.apiServer.SetReloadFunc(a.handleConfigReload)
+		a.apiServer.SetConnectionTracker(a.connTracker)
+		a.apiServer.SetLogBuffer(api.NewLogBuffer(500))
+		a.apiServer.SetConfig(a.cfg)
+
+		// 设置 DNS 解析器（用于 API DNS 查询）
+		dnsCfg := &dnsenhanced.Config{
+			Enable:       a.cfg.DNS.Enable,
+			Listen:       a.cfg.DNS.Listen,
+			EnhancedMode: dnsenhanced.Mode(a.cfg.DNS.EnhancedMode),
+			FakeIPRange:  a.cfg.DNS.FakeIPRange,
+			Nameserver:   a.cfg.DNS.Nameserver,
+			Fallback:     a.cfg.DNS.Fallback,
+		}
+		if resolver, err := dnsenhanced.NewResolver(dnsCfg); err == nil {
+			a.apiServer.SetDNSResolver(resolver)
+		}
+
 		// Provider Manager 在后续初始化后设置
 	}
 
@@ -137,6 +168,12 @@ func (a *App) initComponents() error {
 			log.Warn().Err(err).Msg("[RuleProvider] 初始化失败")
 		}
 	}
+
+	// 11. 初始化 GeoSite 查找
+	if err := geodata.Init("/etc/hades"); err != nil {
+		log.Warn().Err(err).Msg("[GeoSite] 初始化失败，将使用内存匹配")
+	}
+	rules.SetGeoSiteLookup(geodata.LookupGeoSite)
 
 	return nil
 }
@@ -526,7 +563,7 @@ func (a *App) Start() error {
 
 	// 启动 Rule Provider 自动刷新
 	if a.providerMgr != nil {
-		// a.providerMgr.StartAll()
+		a.providerMgr.StartAll()
 	}
 
 	log.Info().Msg("代理内核启动完成")
@@ -638,6 +675,12 @@ func (a *App) Stop() error {
 	// 停止 Rule Provider
 	if a.providerMgr != nil {
 		a.providerMgr.StopAll()
+	}
+
+	// 停止代理提供者
+	for name, prov := range a.proxyProviders {
+		prov.Stop()
+		log.Debug().Str("provider", name).Msg("[ProxyProvider] 已停止")
 	}
 
 	// 停止 eBPF
@@ -801,6 +844,38 @@ func (a *App) initProviders() error {
 // ProviderManager 返回规则集提供者管理器
 func (a *App) ProviderManager() *provider.Manager {
 	return a.providerMgr
+}
+
+// initProxyProviders 初始化代理提供者
+func (a *App) initProxyProviders() {
+	for name, cfg := range a.cfg.ProxyProviders {
+		hc := proxyprovider.HealthCheckConfig{
+			Enable:   cfg.HealthCheck.Enable,
+			URL:      cfg.HealthCheck.URL,
+			Interval: cfg.HealthCheck.Interval,
+			Timeout:  cfg.HealthCheck.Timeout,
+		}
+
+		var prov *proxyprovider.Provider
+		if len(cfg.Header) > 0 {
+			prov = proxyprovider.NewProviderWithHeader(name, cfg.URL, cfg.Path, cfg.Interval, hc, cfg.Header)
+		} else {
+			prov = proxyprovider.NewProvider(name, cfg.URL, cfg.Path, cfg.Interval, hc)
+		}
+
+		if err := prov.Start(); err != nil {
+			log.Warn().Err(err).Str("provider", name).Msg("[ProxyProvider] 启动失败")
+			continue
+		}
+
+		a.proxyProviders[name] = prov
+		log.Info().Str("provider", name).Msg("[ProxyProvider] 已初始化")
+	}
+}
+
+// ProxyProviders 返回代理提供者列表
+func (a *App) ProxyProviders() map[string]*proxyprovider.Provider {
+	return a.proxyProviders
 }
 
 // providerAPIAdapter 将 provider.Manager 适配为 api.RuleProviderManager

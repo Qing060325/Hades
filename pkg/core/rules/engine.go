@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/netip"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/Qing060325/Hades/pkg/core/adapter"
@@ -27,6 +28,13 @@ const (
 	RuleTypeProcessName   RuleType = "PROCESS-NAME"
 	RuleTypeProcessPath   RuleType = "PROCESS-PATH"
 	RuleTypeRuleSet       RuleType = "RULE-SET"
+	RuleTypeNetwork       RuleType = "NETWORK"
+	RuleTypePort          RuleType = "PORT"
+	RuleTypeSrcPort       RuleType = "SRC-PORT"
+	RuleTypeInName        RuleType = "IN-NAME"
+	RuleTypeInType        RuleType = "IN-TYPE"
+	RuleTypeDSCP          RuleType = "DSCP"
+	RuleTypeASN           RuleType = "ASN"
 	RuleTypeMatch         RuleType = "MATCH"
 	RuleTypeFinal         RuleType = "FINAL"
 )
@@ -265,6 +273,9 @@ func ParseRule(ruleStr string) (Rule, error) {
 	}
 
 	switch ruleType {
+	case "AND", "OR", "NOT":
+		return parseInlineLogicalRule(ruleType, payload, adapterName)
+
 	case RuleTypeDomain:
 		return &DomainRule{
 			BaseRule: base,
@@ -300,6 +311,90 @@ func ParseRule(ruleStr string) (Rule, error) {
 			process:  payload,
 		}, nil
 
+	case RuleTypeProcessPath:
+		return &ProcessPathRule{
+			BaseRule:    base,
+			processPath: payload,
+		}, nil
+
+	case RuleTypeGeoSite:
+		return &GeoSiteRule{
+			BaseRule: base,
+			country:  payload,
+		}, nil
+
+	case RuleTypeGeoIP, RuleTypeSrcGeoIP:
+		isSource := ruleType == RuleTypeSrcGeoIP
+		return &GeoIPRule{
+			BaseRule: base,
+			country:  payload,
+			isSource: isSource,
+		}, nil
+
+	case RuleTypeNetwork:
+		return &NetworkRule{
+			BaseRule: base,
+			network:  strings.ToLower(payload),
+		}, nil
+
+	case RuleTypePort:
+		port, err := strconv.ParseUint(payload, 10, 16)
+		if err != nil {
+			return nil, err
+		}
+		return &PortRule{
+			BaseRule: base,
+			port:     uint16(port),
+		}, nil
+
+	case RuleTypeSrcPort:
+		port, err := strconv.ParseUint(payload, 10, 16)
+		if err != nil {
+			return nil, err
+		}
+		return &SrcPortRule{
+			BaseRule: base,
+			port:     uint16(port),
+		}, nil
+
+	case RuleTypeInName:
+		return &InNameRule{
+			BaseRule: base,
+			inName:   payload,
+		}, nil
+
+	case RuleTypeInType:
+		return &InTypeRule{
+			BaseRule: base,
+			inType:   payload,
+		}, nil
+
+	case RuleTypeDSCP:
+		dscp, err := strconv.Atoi(payload)
+		if err != nil {
+			return nil, err
+		}
+		return &DSCPRule{
+			BaseRule: base,
+			dscp:     dscp,
+		}, nil
+
+	case RuleTypeASN:
+		asn, err := strconv.ParseUint(payload, 10, 32)
+		if err != nil {
+			return nil, err
+		}
+		return &ASNRule{
+			BaseRule: base,
+			asn:      uint(asn),
+		}, nil
+
+	case RuleTypeRuleSet:
+		return &RuleSetRule{
+			BaseRule: base,
+			name:     payload,
+		}, nil
+
 	case RuleTypeMatch, RuleTypeFinal:
 		return &MatchRule{BaseRule: base}, nil
 
@@ -311,6 +406,151 @@ func ParseRule(ruleStr string) (Rule, error) {
 // Rules 返回所有规则列表
 func (e *Engine) Rules() []Rule {
 	return e.rules
+}
+
+// AddRule 动态添加规则
+func (e *Engine) AddRule(rule Rule) {
+	e.rules = append(e.rules, rule)
+}
+
+// RemoveRule 按索引移除规则
+func (e *Engine) RemoveRule(index int) error {
+	if index < 0 || index >= len(e.rules) {
+		return fmt.Errorf("rule index %d out of range [0, %d)", index, len(e.rules))
+	}
+	e.rules = append(e.rules[:index], e.rules[index+1:]...)
+	return nil
+}
+
+// RulesCount 返回规则数量
+func (e *Engine) RulesCount() int {
+	return len(e.rules)
+}
+
+// MatchWithRule 匹配规则并返回适配器名称和匹配的规则
+func (e *Engine) MatchWithRule(metadata *adapter.Metadata) (string, Rule) {
+	for _, rule := range e.rules {
+		if rule.Match(metadata) {
+			return rule.Adapter(), rule
+		}
+	}
+	return "DIRECT", nil
+}
+
+// RuleSetRule 规则集规则
+type RuleSetRule struct {
+	BaseRule
+	name string
+}
+
+// Match 匹配（委托给引擎的规则集）
+func (r *RuleSetRule) Match(metadata *adapter.Metadata) bool {
+	return false
+}
+
+// Type 返回类型
+func (r *RuleSetRule) Type() RuleType {
+	return RuleTypeRuleSet
+}
+
+// InlineLogicalRule 内联逻辑规则（AND/OR/NOT）
+type InlineLogicalRule struct {
+	BaseRule
+	logicType string
+	subRules  []Rule
+}
+
+// Match 匹配
+func (r *InlineLogicalRule) Match(metadata *adapter.Metadata) bool {
+	switch r.logicType {
+	case "AND":
+		for _, rule := range r.subRules {
+			if !rule.Match(metadata) {
+				return false
+			}
+		}
+		return true
+	case "OR":
+		for _, rule := range r.subRules {
+			if rule.Match(metadata) {
+				return true
+			}
+		}
+		return false
+	case "NOT":
+		if len(r.subRules) > 0 {
+			return !r.subRules[0].Match(metadata)
+		}
+		return false
+	}
+	return false
+}
+
+// Type 返回类型
+func (r *InlineLogicalRule) Type() RuleType {
+	return RuleType("LOGICAL-" + r.logicType)
+}
+
+// parseInlineLogicalRule 解析内联逻辑规则
+// 格式: AND,((RULE1),(RULE2)),ADAPTER
+func parseInlineLogicalRule(logicType string, payload string, adapterName string) (Rule, error) {
+	// 去掉外层括号
+	body := payload
+	if strings.HasPrefix(body, "(") && strings.HasSuffix(body, ")") {
+		body = body[1 : len(body)-1]
+	}
+
+	subRuleStrs := splitInlineLogicalRules(body)
+	subRules := make([]Rule, 0, len(subRuleStrs))
+
+	for _, subRuleStr := range subRuleStrs {
+		subRuleStr = strings.TrimSpace(subRuleStr)
+		if subRuleStr == "" {
+			continue
+		}
+		if strings.HasPrefix(subRuleStr, "(") && strings.HasSuffix(subRuleStr, ")") {
+			subRuleStr = subRuleStr[1 : len(subRuleStr)-1]
+		}
+		rule, err := ParseRule(subRuleStr)
+		if err != nil {
+			return nil, err
+		}
+		if rule != nil {
+			subRules = append(subRules, rule)
+		}
+	}
+
+	return &InlineLogicalRule{
+		BaseRule:  BaseRule{adapter: adapterName, payload: logicType},
+		logicType: logicType,
+		subRules:  subRules,
+	}, nil
+}
+
+// splitInlineLogicalRules 按逗号分割，但尊重括号嵌套
+func splitInlineLogicalRules(s string) []string {
+	var result []string
+	depth := 0
+	start := 0
+
+	for i, c := range s {
+		switch c {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		case ',':
+			if depth == 0 {
+				result = append(result, s[start:i])
+				start = i + 1
+			}
+		}
+	}
+	if start < len(s) {
+		result = append(result, s[start:])
+	}
+
+	return result
 }
 
 // RuleProviderConfig 规则提供者配置 (占位)

@@ -65,6 +65,65 @@ type ClashConfig struct {
 	FindProcessMode string `yaml:"find-process-mode"`
 }
 
+// UnmarshalYAML 自定义 YAML 反序列化，支持 Clash 别名字段
+func (c *ClashConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	// 先用 map 解析以支持别名
+	var raw map[string]interface{}
+	if err := unmarshal(&raw); err != nil {
+		return err
+	}
+
+	// 处理别名映射
+	// proxies / Proxy
+	if v, ok := raw["proxies"]; ok {
+		raw["proxies"] = v
+	} else if v, ok := raw["Proxy"]; ok {
+		raw["proxies"] = v
+	}
+	delete(raw, "Proxy")
+
+	// proxy-groups / Proxy Group
+	if v, ok := raw["proxy-groups"]; ok {
+		raw["proxy-groups"] = v
+	} else if v, ok := raw["Proxy Group"]; ok {
+		raw["proxy-groups"] = v
+	}
+	delete(raw, "Proxy Group")
+
+	// rules / Rule
+	if v, ok := raw["rules"]; ok {
+		raw["rules"] = v
+	} else if v, ok := raw["Rule"]; ok {
+		raw["rules"] = v
+	}
+	delete(raw, "Rule")
+
+	// rule-providers / Rule Provider
+	if v, ok := raw["rule-providers"]; ok {
+		raw["rule-providers"] = v
+	} else if v, ok := raw["Rule Provider"]; ok {
+		raw["rule-providers"] = v
+	}
+	delete(raw, "Rule Provider")
+
+	// proxy-providers / Proxy Provider
+	if v, ok := raw["proxy-providers"]; ok {
+		raw["proxy-providers"] = v
+	} else if v, ok := raw["Proxy Provider"]; ok {
+		raw["proxy-providers"] = v
+	}
+	delete(raw, "Proxy Provider")
+
+	// 重新序列化为 YAML 再反序列化到结构体
+	// 使用临时类型避免无限递归
+	type clashConfigAlias ClashConfig
+	data, err := yaml.Marshal(raw)
+	if err != nil {
+		return err
+	}
+	return yaml.Unmarshal(data, (*clashConfigAlias)(c))
+}
+
 // ClashProxyConfig Clash 代理配置
 type ClashProxyConfig struct {
 	// 基础字段

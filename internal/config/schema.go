@@ -58,6 +58,15 @@ type Config struct {
 	// GeoData
 	GeoXURL    map[string]string `yaml:"geox-url"`
 	GeoDataMode bool             `yaml:"geodata-mode"`
+
+	// Profile for Clash API compatibility
+	Profile ProfileConfig `yaml:"profile"`
+
+	// Hosts file
+	Hosts map[string]string `yaml:"hosts"`
+
+	// NTP
+	NTP NTPConfig `yaml:"ntp"`
 }
 
 // TunConfig TUN 模式配置
@@ -362,6 +371,19 @@ type SubscriptionConfig struct {
 	URL        string        `yaml:"url"`
 	Interval   time.Duration `yaml:"interval"`
 	AutoUpdate bool          `yaml:"auto-update"`
+}
+
+// ProfileConfig Clash API 兼容配置
+type ProfileConfig struct {
+	StoreSelected string `yaml:"store-selected"`
+}
+
+// NTPConfig NTP 时间同步配置
+type NTPConfig struct {
+	Enable   bool   `yaml:"enable"`
+	Server   string `yaml:"server"`
+	Port     int    `yaml:"port"`
+	Interval int    `yaml:"interval"` // 同步间隔（分钟）
 }
 
 // Default 返回默认配置

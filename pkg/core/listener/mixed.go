@@ -3,6 +3,7 @@ package listener
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -157,68 +158,43 @@ func (l *MixedListener) handleHTTP(conn net.Conn, reader *bufio.Reader) {
 // conn: 合并了 bufio 缓冲数据的 reader（用于读取 TLS 数据）
 // rawConn: 原始连接（用于写入响应和作为 net.Conn）
 func (l *MixedListener) handleConnect(conn io.Reader, rawConn net.Conn, req *http.Request, metadata *adapter.Metadata) {
-	// 选择适配器
-	adapt := l.SelectAdapter(metadata)
-	if adapt == nil {
-		rawConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
-		return
-	}
+	log.Debug().Str("target", req.Host).Msg("[Mixed] CONNECT请求")
 
-	log.Debug().Str("adapter", adapt.Name()).Str("target", req.Host).Msg("[Mixed] CONNECT请求")
-
-	// 建立后端连接
-	backendConn, err := adapt.DialContext(context.Background(), metadata)
-	if err != nil {
-		log.Error().Err(err).Str("adapter", adapt.Name()).Msg("建立后端连接失败")
-		rawConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
-		return
-	}
-	defer backendConn.Close()
-
-	// 响应客户端
+	// 响应客户端：连接已建立
 	rawConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
 
-	// 双向转发（conn 包含 bufio 缓冲数据）
-	l.relay(conn, rawConn, backendConn)
+	// 通过 Tunnel 调度（Tunnel 内部处理 DNS、规则匹配、适配器选择、转发）
+	// 包装 rawConn 为 bufferedConn 以保留 bufio 中的缓冲数据
+	bufferedConn := &bufferedWrapper{Reader: conn, Conn: rawConn}
+	l.DispatchTCP(bufferedConn, metadata)
+}
+
+// bufferedWrapper 将 io.Reader 和 net.Conn 合并为 net.Conn
+// 用于传递包含 bufio 缓冲数据的连接给 Tunnel
+type bufferedWrapper struct {
+	io.Reader
+	net.Conn
+}
+
+func (bw *bufferedWrapper) Read(p []byte) (int, error) {
+	return bw.Reader.Read(p)
 }
 
 // handleHTTPRequest 处理普通HTTP请求
 // bufferedConn: 合并了 bufio 缓冲数据的 reader（包含可能的 body 数据）
 // rawConn: 原始连接（用于写入和作为 net.Conn）
 func (l *MixedListener) handleHTTPRequest(bufferedConn io.Reader, rawConn net.Conn, req *http.Request, metadata *adapter.Metadata) {
-	// 提取目标地址
-	host := req.Host
-	if !strings.Contains(host, ":") {
-		host = host + ":80"
-	}
-
 	metadata.Host = req.Host
 	metadata.DstPort = 80
 
-	// 选择适配器
-	adapt := l.SelectAdapter(metadata)
-	if adapt == nil {
-		rawConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
-		return
-	}
+	// 将 HTTP 请求序列化到缓冲区，和 rawConn 合并
+	var reqBuf bytes.Buffer
+	req.Write(&reqBuf)
+	combined := io.MultiReader(&reqBuf, bufferedConn)
 
-	// 建立后端连接
-	backendConn, err := adapt.DialContext(context.Background(), metadata)
-	if err != nil {
-		rawConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
-		return
-	}
-	defer backendConn.Close()
-
-	// 转发请求
-	// req.Body 由 http.ReadRequest 创建，内部使用 bufio.Reader。
-	// bufio.Reader 可能已缓冲了 body 的一部分数据。
-	// req.Write() 通过 io.Copy 从 req.Body 读取，会先读取缓冲数据，
-	// 再从底层连接读取剩余数据，因此能正确转发完整 body。
-	req.Write(backendConn)
-
-	// 双向转发（bufferedConn 包含 bufio 缓冲数据）
-	l.relay(bufferedConn, rawConn, backendConn)
+	// 通过 Tunnel 调度
+	wrappedConn := &bufferedWrapper{Reader: combined, Conn: rawConn}
+	l.DispatchTCP(wrappedConn, metadata)
 }
 
 // handleSOCKS5 处理SOCKS5请求
@@ -254,7 +230,7 @@ func (l *MixedListener) handleSOCKS5(conn net.Conn, reader *bufio.Reader) {
 	}
 
 	cmd := reqHeader[1]
-	if cmd != 0x01 { // 只支持 CONNECT
+	if cmd != 0x01 && cmd != 0x03 { // CONNECT (0x01) 和 UDP ASSOCIATE (0x03)
 		conn.Write([]byte{0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 		return
 	}
@@ -298,6 +274,17 @@ func (l *MixedListener) handleSOCKS5(conn net.Conn, reader *bufio.Reader) {
 	}
 	port = uint16(portBytes[0])<<8 | uint16(portBytes[1])
 
+	// 根据命令类型处理
+	switch cmd {
+	case 0x01: // CONNECT
+		l.handleSOCKS5Connect(conn, reader, host, port)
+	case 0x03: // UDP ASSOCIATE
+		l.handleSOCKS5UDPAssociate(conn, reader, host, port)
+	}
+}
+
+// handleSOCKS5Connect 处理 SOCKS5 CONNECT 命令
+func (l *MixedListener) handleSOCKS5Connect(conn net.Conn, reader *bufio.Reader, host string, port uint16) {
 	// 构建元数据
 	metadata := &adapter.Metadata{
 		Type:    adapter.MetadataTypeSOCKS,
@@ -307,30 +294,266 @@ func (l *MixedListener) handleSOCKS5(conn net.Conn, reader *bufio.Reader) {
 		InName: l.addr,
 	}
 
-	log.Debug().Str("target", fmt.Sprintf("%s:%d", host, port)).Msg("[Mixed] SOCKS5请求")
-
-	// 选择适配器
-	adapt := l.SelectAdapter(metadata)
-	if adapt == nil {
-		conn.Write([]byte{0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
-		return
-	}
-
-	// 建立后端连接
-	backendConn, err := adapt.DialContext(context.Background(), metadata)
-	if err != nil {
-		log.Error().Err(err).Str("adapter", adapt.Name()).Msg("建立后端连接失败")
-		conn.Write([]byte{0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
-		return
-	}
-	defer backendConn.Close()
+	log.Debug().Str("target", fmt.Sprintf("%s:%d", host, port)).Msg("[Mixed] SOCKS5 CONNECT请求")
 
 	// 响应成功
 	conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 
-	// 双向转发（SOCKS5 握手后 bufio 可能缓冲了部分 payload 数据）
-	bufferedConn := io.MultiReader(reader, conn)
-	l.relay(bufferedConn, conn, backendConn)
+	// SOCKS5 握手后 bufio 可能缓冲了部分 payload 数据
+	bufferedConn := &bufferedWrapper{Reader: io.MultiReader(reader, conn), Conn: conn}
+
+	// 通过 Tunnel 调度
+	l.DispatchTCP(bufferedConn, metadata)
+}
+
+// handleSOCKS5UDPAssociate 处理 SOCKS5 UDP ASSOCIATE 命令
+// 创建 UDP 中继套接字，将地址/端口告知客户端，然后在客户端和代理之间转发 UDP 数据包
+func (l *MixedListener) handleSOCKS5UDPAssociate(conn net.Conn, reader *bufio.Reader, clientHost string, clientPort uint16) {
+	log.Debug().
+		Str("client", fmt.Sprintf("%s:%d", clientHost, clientPort)).
+		Msg("[Mixed] SOCKS5 UDP ASSOCIATE 请求")
+
+	// 获取客户端的 TCP 连接地址，用于确定 UDP 回复目标
+	tcpAddr := conn.RemoteAddr().(*net.TCPAddr)
+	clientIP := tcpAddr.IP
+
+	// 创建 UDP 中继监听套接字
+	// 绑定到与 TCP 监听器相同的地址
+	udpAddr, err := net.ResolveUDPAddr("udp", l.listener.Addr().String())
+	if err != nil {
+		conn.Write([]byte{0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+		return
+	}
+
+	udpConn, err := net.ListenUDP("udp", udpAddr)
+	if err != nil {
+		log.Error().Err(err).Msg("[Mixed] 创建 UDP 中继套接字失败")
+		conn.Write([]byte{0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+		return
+	}
+	defer udpConn.Close()
+
+	// 构建回复的 BND.ADDR 和 BND.PORT
+	// 使用 UDP 套接字的地址
+	relayAddr := udpConn.LocalAddr().(*net.UDPAddr)
+
+	// 构建 SOCKS5 成功响应
+	// VER=0x05, REP=0x00(成功), RSV=0x00, ATYP=0x01(IPv4)
+	var reply []byte
+	if relayAddr.IP.To4() != nil {
+		reply = make([]byte, 10)
+		reply[0] = 0x05
+		reply[1] = 0x00
+		reply[2] = 0x00
+		reply[3] = 0x01 // IPv4
+		copy(reply[4:8], relayAddr.IP.To4())
+		reply[8] = byte(relayAddr.Port >> 8)
+		reply[9] = byte(relayAddr.Port)
+	} else {
+		reply = make([]byte, 22)
+		reply[0] = 0x05
+		reply[1] = 0x00
+		reply[2] = 0x00
+		reply[3] = 0x04 // IPv6
+		copy(reply[4:20], relayAddr.IP.To16())
+		reply[20] = byte(relayAddr.Port >> 8)
+		reply[21] = byte(relayAddr.Port)
+	}
+
+	if _, err := conn.Write(reply); err != nil {
+		log.Error().Err(err).Msg("[Mixed] 发送 UDP ASSOCIATE 响应失败")
+		return
+	}
+
+	log.Debug().
+		Str("relay_addr", relayAddr.String()).
+		Msg("[Mixed] UDP ASSOCIATE 中继已建立")
+
+	// UDP 中继循环
+	// SOCKS5 UDP 数据包格式:
+	// +----+------+------+----------+----------+----------+
+	// |RSV | FRAG | ATYP | DST.ADDR | DST.PORT |   DATA   |
+	// +----+------+------+----------+----------+----------+
+	// | 2  |  1   |  1   | Variable |    2     | Variable |
+	// +----+------+------+----------+----------+----------+
+
+	done := make(chan struct{})
+	defer close(done)
+
+	// 监控 TCP 连接，客户端断开时停止 UDP 中继
+	go func() {
+		// 读取 TCP 连接，等待客户端断开
+		buf := make([]byte, 1)
+		conn.Read(buf) // 会阻塞直到客户端断开
+		udpConn.Close()
+	}()
+
+	// UDP 中继主循环
+	udpBuf := make([]byte, 65535)
+	for {
+		n, clientUDPAddr, err := udpConn.ReadFromUDP(udpBuf)
+		if err != nil {
+			select {
+			case <-done:
+				return
+			default:
+				return
+			}
+		}
+
+		// 验证 UDP 数据包来自正确的客户端
+		if !clientIP.Equal(clientUDPAddr.IP) {
+			// RFC 1928: UDP 数据包必须来自与 TCP 连接相同的客户端
+			log.Debug().
+				Str("expected", clientIP.String()).
+				Str("got", clientUDPAddr.IP.String()).
+				Msg("[Mixed] UDP ASSOCIATE 丢弃来自未知地址的数据包")
+			continue
+		}
+
+		// 解析 SOCKS5 UDP 头部
+		if n < 10 { // 最小: RSV(2) + FRAG(1) + ATYP(1) + IPv4(4) + PORT(2)
+			continue
+		}
+
+		// RSV: 0x0000
+		if udpBuf[0] != 0x00 || udpBuf[1] != 0x00 {
+			continue
+		}
+
+		// FRAG: 仅支持 0（无分片）
+		if udpBuf[2] != 0x00 {
+			continue
+		}
+
+		atyp := udpBuf[3]
+		var dstHost string
+		var dstPort uint16
+		var dataOffset int
+
+		switch atyp {
+		case 0x01: // IPv4
+			if n < 10 {
+				continue
+			}
+			dstHost = net.IP(udpBuf[4:8]).String()
+			dstPort = uint16(udpBuf[8])<<8 | uint16(udpBuf[9])
+			dataOffset = 10
+		case 0x03: // 域名
+			if n < 7 {
+				continue
+			}
+			domainLen := int(udpBuf[4])
+			if n < 5+domainLen+2 {
+				continue
+			}
+			dstHost = string(udpBuf[5 : 5+domainLen])
+			portOff := 5 + domainLen
+			dstPort = uint16(udpBuf[portOff])<<8 | uint16(udpBuf[portOff+1])
+			dataOffset = portOff + 2
+		case 0x04: // IPv6
+			if n < 22 {
+				continue
+			}
+			dstHost = net.IP(udpBuf[4:20]).String()
+			dstPort = uint16(udpBuf[20])<<8 | uint16(udpBuf[21])
+			dataOffset = 22
+		default:
+			continue
+		}
+
+		if dataOffset >= n {
+			continue
+		}
+
+		payload := udpBuf[dataOffset:n]
+
+		// 构建元数据
+		metadata := &adapter.Metadata{
+			Type:    adapter.MetadataTypeSOCKS,
+			NetWork: "udp",
+			Host:    dstHost,
+			DstPort: dstPort,
+			InName:  l.addr,
+		}
+
+		// 选择适配器
+		adapt := l.SelectAdapter(metadata)
+		if adapt == nil || !adapt.SupportUDP() {
+			continue
+		}
+
+		// 异步转发 UDP 数据包
+		go func(data []byte, dst string, port uint16, m *adapter.Metadata, a adapter.Adapter, replyAddr *net.UDPAddr) {
+			packetConn, err := a.DialUDPContext(context.Background(), m)
+			if err != nil {
+				log.Debug().Err(err).Msg("[Mixed] UDP ASSOCIATE dial 失败")
+				return
+			}
+			defer packetConn.Close()
+
+			// 发送到目标
+			dstUDPAddr := &net.UDPAddr{
+				IP:   net.ParseIP(dst),
+				Port: int(port),
+			}
+
+			_, err = packetConn.WriteTo(data, dstUDPAddr)
+			if err != nil {
+				return
+			}
+
+			// 等待响应
+			packetConn.SetReadDeadline(time.Now().Add(30 * time.Second))
+			respBuf := make([]byte, 65535)
+			n, _, err := packetConn.ReadFrom(respBuf)
+			if err != nil {
+				return
+			}
+
+			// 封装 SOCKS5 UDP 响应头
+			var respHeader []byte
+			dstIP := net.ParseIP(dst)
+			if dstIP.To4() != nil {
+				respHeader = make([]byte, 10)
+				respHeader[0] = 0x00 // RSV
+				respHeader[1] = 0x00 // RSV
+				respHeader[2] = 0x00 // FRAG
+				respHeader[3] = 0x01 // ATYP IPv4
+				copy(respHeader[4:8], dstIP.To4())
+				respHeader[8] = byte(port >> 8)
+				respHeader[9] = byte(port)
+			} else if dstIP.To16() != nil {
+				respHeader = make([]byte, 22)
+				respHeader[0] = 0x00
+				respHeader[1] = 0x00
+				respHeader[2] = 0x00
+				respHeader[3] = 0x04 // ATYP IPv6
+				copy(respHeader[4:20], dstIP.To16())
+				respHeader[20] = byte(port >> 8)
+				respHeader[21] = byte(port)
+			} else {
+				// 域名
+				domainBytes := []byte(dst)
+				respHeader = make([]byte, 5+len(domainBytes)+2)
+				respHeader[0] = 0x00
+				respHeader[1] = 0x00
+				respHeader[2] = 0x00
+				respHeader[3] = 0x03
+				respHeader[4] = byte(len(domainBytes))
+				copy(respHeader[5:5+len(domainBytes)], domainBytes)
+				portOff := 5 + len(domainBytes)
+				respHeader[portOff] = byte(port >> 8)
+				respHeader[portOff+1] = byte(port)
+			}
+
+			// 组装完整 UDP 响应包
+			fullResp := append(respHeader, respBuf[:n]...)
+
+			// 发回客户端
+			udpConn.WriteToUDP(fullResp, replyAddr)
+		}(payload, dstHost, dstPort, metadata, adapt, clientUDPAddr)
+	}
 }
 
 // relay 双向转发
