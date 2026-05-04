@@ -23,11 +23,11 @@ require (
 	github.com/klauspost/reedsolomon v1.12.1 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/metacubex/kcp-go v0.0.0-20241017155711 // indirect
+	github.com/metacubex/kcp-go v0.0.0-20260105040817-550693377604 // indirect
 	github.com/metacubex/randv2 v0.2.0 // indirect
-	github.com/metacubex/sing v0.5.1 // indirect
-	github.com/metacubex/smux v0.0.0-20240816072205-1925b7e86387 // indirect
-	github.com/metacubex/yamux v0.0.0-20240821114136-d083601f3517 // indirect
+	github.com/metacubex/sing v0.5.2 // indirect
+	github.com/metacubex/smux v0.0.0-20260105030934-d0c8756d3141 // indirect
+	github.com/metacubex/yamux v0.0.0-20250918083631-dd5f17c0be49 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.53.0 // indirect
