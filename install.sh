@@ -13,6 +13,15 @@
 
 set -euo pipefail
 
+# ────────────────────── 清理陷阱 ──────────────────────
+
+cleanup() {
+  rm -f /tmp/hades-release.json /tmp/hades-release-redirect
+  rm -f /tmp/hades-linux-* /tmp/hades-darwin-*
+  rm -f /tmp/hades-*.sha256
+}
+trap cleanup EXIT
+
 # ────────────────────── 配置 ──────────────────────
 
 readonly SCRIPT_VER="3.0"
@@ -20,7 +29,7 @@ readonly REPO="Qing060325/Hades"
 readonly GITHUB_API="https://api.github.com/repos/${REPO}"
 readonly GITHUB_URL="https://github.com/${REPO}"
 readonly GITHUB_RAW="https://raw.githubusercontent.com/${REPO}/main"
-readonly FALLBACK_VERSION="v0.5.0"
+readonly FALLBACK_VERSION="v1.0.0"
 
 # 安装路径（root 模式 vs 用户模式）
 INSTALL_DIR="/usr/local/bin"
@@ -191,7 +200,8 @@ install_binary() {
       if [ -n "$actual" ] && [ "$expected" = "$actual" ]; then
         ok "SHA256 校验通过"
       elif [ -n "$actual" ]; then
-        warn "SHA256 校验不一致，但继续安装（期望: ${expected:0:16}... 实际: ${actual:0:16}...）"
+        rm -f "$tmp_file" "$sha256_file"
+        die "SHA256 校验失败，文件可能被篡改（期望: ${expected:0:16}... 实际: ${actual:0:16}...）"
       fi
       rm -f "$sha256_file"
     else
@@ -232,8 +242,15 @@ build_from_source() {
   fi
   ok "Go 版本: ${go_ver}"
 
-  # 设置 GOPROXY 加速依赖下载（国内友好）
-  export GOPROXY="${GOPROXY:-https://goproxy.cn,https://goproxy.io,direct}"
+  # 设置 GOPROXY（自动检测是否需要国内镜像）
+  if [ -z "${GOPROXY:-}" ]; then
+    local tz="${TZ:-$(cat /etc/timezone 2>/dev/null || readlink /etc/localtime 2>/dev/null | grep -oE '[^/]+$' || echo '')}"
+    if [[ "$tz" == *"Asia"* ]] || [[ "$tz" == *"Shanghai"* ]] || [[ "$tz" == *"Chongqing"* ]]; then
+      export GOPROXY="https://goproxy.cn,https://goproxy.io,direct"
+    else
+      export GOPROXY="https://proxy.golang.org,direct"
+    fi
+  fi
 
   local tmp_dir; tmp_dir=$(mktemp -d)
   git clone --depth 1 "https://github.com/${REPO}.git" "$tmp_dir"
