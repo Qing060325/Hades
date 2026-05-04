@@ -115,7 +115,7 @@ func parseGeositeData(data []byte) (map[string][]DomainEntry, error) {
 			}
 		} else {
 			// 跳过未知字段
-			pos = skipField(data, pos, wireType)
+			pos = skipField(data, pos, int(wireType))
 			if pos < 0 {
 				break
 			}
@@ -171,7 +171,7 @@ func parseGeoSiteEntry(data []byte) (*GeoSiteEntry, error) {
 			}
 
 		default:
-			pos = skipField(data, pos, wireType)
+			pos = skipField(data, pos, int(wireType))
 			if pos < 0 {
 				return entry, nil
 			}
@@ -218,7 +218,7 @@ func parseDomainEntry(data []byte) (*DomainEntry, error) {
 			pos += int(length)
 
 		default:
-			pos = skipField(data, pos, wireType)
+			pos = skipField(data, pos, int(wireType))
 			if pos < 0 {
 				return domain, nil
 			}

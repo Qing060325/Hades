@@ -34,6 +34,7 @@ type Config struct {
 	Fallback     []string `yaml:"fallback"`
 	Hosts        map[string]string `yaml:"hosts"`
 	FallbackFilter *FallbackFilter `yaml:"fallback-filter"`
+	DefaultNameserver []string `yaml:"default-nameserver"`
 }
 
 // FallbackFilter 回退过滤器

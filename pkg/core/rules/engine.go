@@ -274,7 +274,7 @@ func ParseRule(ruleStr string) (Rule, error) {
 
 	switch ruleType {
 	case "AND", "OR", "NOT":
-		return parseInlineLogicalRule(ruleType, payload, adapterName)
+		return parseInlineLogicalRule(string(ruleType), payload, adapterName)
 
 	case RuleTypeDomain:
 		return &DomainRule{
