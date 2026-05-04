@@ -187,21 +187,25 @@ install_binary() {
 
   if [ "$success" = true ]; then
     # SHA256 校验
-    local sha256_url="${download_url}.sha256"
-    local sha256_file="/tmp/${binary_name}.sha256"
+    local sha256_url="${GITHUB_URL}/releases/download/${version}/checksums-sha256.txt"
+    local sha256_file="/tmp/hades-checksums-sha256.txt"
     if download "$sha256_url" "$sha256_file" 2>/dev/null; then
       local expected actual
-      expected=$(awk '{print $1}' "$sha256_file")
-      if command -v sha256sum &>/dev/null; then
-        actual=$(sha256sum "$tmp_file" | awk '{print $1}')
-      elif command -v shasum &>/dev/null; then
-        actual=$(shasum -a 256 "$tmp_file" | awk '{print $1}')
-      fi
-      if [ -n "$actual" ] && [ "$expected" = "$actual" ]; then
-        ok "SHA256 校验通过"
-      elif [ -n "$actual" ]; then
-        rm -f "$tmp_file" "$sha256_file"
-        die "SHA256 校验失败，文件可能被篡改（期望: ${expected:0:16}... 实际: ${actual:0:16}...）"
+      expected=$(grep "${binary_name}" "$sha256_file" | awk '{print $1}')
+      if [ -n "$expected" ]; then
+        if command -v sha256sum &>/dev/null; then
+          actual=$(sha256sum "$tmp_file" | awk '{print $1}')
+        elif command -v shasum &>/dev/null; then
+          actual=$(shasum -a 256 "$tmp_file" | awk '{print $1}')
+        fi
+        if [ -n "$actual" ] && [ "$expected" = "$actual" ]; then
+          ok "SHA256 校验通过"
+        elif [ -n "$actual" ]; then
+          rm -f "$tmp_file" "$sha256_file"
+          die "SHA256 校验失败，文件可能被篡改（期望: ${expected:0:16}... 实际: ${actual:0:16}...）"
+        fi
+      else
+        warn "校验文件中未找到 ${binary_name}，跳过校验"
       fi
       rm -f "$sha256_file"
     else
