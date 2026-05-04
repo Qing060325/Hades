@@ -11,8 +11,6 @@ import (
 
 	"github.com/Qing060325/Hades/pkg/core/adapter"
 	"github.com/Qing060325/Hades/pkg/core/group"
-	"github.com/Qing060325/Hades/pkg/core/listener/redir"
-	"github.com/Qing060325/Hades/pkg/core/listener/tproxy"
 	"github.com/Qing060325/Hades/pkg/core/rules"
 	"github.com/Qing060325/Hades/pkg/core/tunnel"
 	"github.com/Qing060325/Hades/pkg/perf/pool"
@@ -158,48 +156,6 @@ func (m *Manager) UpdateManagers(adapterMgr *adapter.Manager, ruleEngine *rules.
 		m.tunnel.UpdateRuleEngine(ruleEngine)
 		m.tunnel.UpdateGroupManager(groupMgr)
 	}
-}
-
-// StartRedirListener 启动 iptables REDIRECT 透明代理监听器
-func (m *Manager) StartRedirListener(ctx context.Context, addr string, allowLan bool) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if _, ok := m.listeners[addr]; ok {
-		return fmt.Errorf("地址 %s 已被监听", addr)
-	}
-
-	l := redir.NewRedirListener(addr, allowLan, m.adapterManager, m.ruleEngine, m.groupManager)
-	m.listeners[addr] = l
-
-	go func() {
-		if err := l.Listen(ctx); err != nil {
-			log.Error().Err(err).Str("addr", addr).Msg("Redir 监听器异常")
-		}
-	}()
-
-	return nil
-}
-
-// StartTProxyListener 启动 TProxy 透明代理监听器
-func (m *Manager) StartTProxyListener(ctx context.Context, addr string, allowLan bool) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if _, ok := m.listeners[addr]; ok {
-		return fmt.Errorf("地址 %s 已被监听", addr)
-	}
-
-	l := tproxy.NewTProxyListener(addr, allowLan, m.adapterManager, m.ruleEngine, m.groupManager)
-	m.listeners[addr] = l
-
-	go func() {
-		if err := l.Listen(ctx); err != nil {
-			log.Error().Err(err).Str("addr", addr).Msg("TProxy 监听器异常")
-		}
-	}()
-
-	return nil
 }
 
 // ActiveConnections 返回所有监听器的活跃连接数

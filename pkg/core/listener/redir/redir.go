@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package redir Linux iptables REDIRECT 透明代理入站监听器
 package redir
 

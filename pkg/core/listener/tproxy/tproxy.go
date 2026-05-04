@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package tproxy Linux TProxy 透明代理入站监听器
 // 使用 IP_TRANSPARENT socket 选项实现透明代理，支持 TCP 和 UDP
 package tproxy
